@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Werewolf - Moderator Control Panel</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .message-log-container { max-height: 200px; overflow-y: auto; }
+    </style>
+</head>
+<body class="bg-gray-900 text-white min-h-screen flex flex-col items-center justify-center p-4">
+    <div class="bg-gray-800 p-8 rounded-xl shadow-2xl w-full max-w-md">
+        <h1 class="text-3xl font-bold mb-6 text-center text-purple-400">Moderator Control Panel</h1>
+
+        <div class="mb-6">
+            <label for="messageInput" class="block text-sm font-medium text-gray-300 mb-1">Message to Display:</label>
+            <input type="text" id="messageInput" class="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:ring-purple-500 focus:border-purple-500" placeholder="Enter message for public display...">
+        </div>
+
+        <button id="sendMessage" class="w-full bg-purple-600 hover:bg-purple-700 text-white font-semibold py-3 px-4 rounded-lg shadow-md transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-opacity-50">
+            Send to Public Display
+        </button>
+
+        <div class="mt-6">
+            <h2 class="text-xl font-semibold mb-2 text-purple-300">Connection Status:</h2>
+            <div id="status" class="p-3 bg-gray-700 rounded-lg text-sm">Connecting to server...</div>
+        </div>
+        
+        <div class="mt-6">
+            <h3 class="text-lg font-semibold mb-2 text-purple-300">Sent Messages Log:</h3>
+            <div id="sentMessagesLog" class="message-log-container p-3 bg-gray-700 rounded-lg text-sm space-y-1">
+                </div>
+        </div>
+    </div>
+
+    <script>
+        // Ensure DOM is fully loaded before trying to access elements
+        document.addEventListener('DOMContentLoaded', () => {
+            const messageInput = document.getElementById('messageInput');
+            const sendMessageBtn = document.getElementById('sendMessage');
+            const statusDiv = document.getElementById('status');
+            const sentMessagesLog = document.getElementById('sentMessagesLog');
+            let socket;
+
+            function connect() {
+                // Ensure this URL is correct. If your server is not on localhost or port 8080, change this.
+                // For Glitch or other publicly hosted servers, you might use wss:// and a different host.
+                // Example: const socket = new WebSocket(location.protocol.replace("http", "ws") + "//" + location.host + "/socket_path_if_any");
+                socket = new WebSocket('ws://localhost:8080');
+
+
+                socket.onopen = function(event) {
+                    console.log('Moderator connected to WebSocket server.');
+                    statusDiv.textContent = 'Connected to server.';
+                    statusDiv.className = 'p-3 bg-green-700 text-green-100 rounded-lg text-sm';
+                };
+
+                socket.onmessage = function(event) {
+                    // Moderators typically send, but could receive confirmations or errors
+                    console.log('Message from server:', event.data);
+                };
+
+                socket.onclose = function(event) {
+                    console.log('Disconnected from WebSocket server.');
+                    console.log(`WebSocket Close Details: Code=${event.code}, Reason='${event.reason}', WasClean=${event.wasClean}`);
+                    statusDiv.textContent = `Disconnected (Code: ${event.code}). Attempting to reconnect...`;
+                    statusDiv.className = 'p-3 bg-red-700 text-red-100 rounded-lg text-sm';
+                    // Try to reconnect after a delay
+                    setTimeout(connect, 3000); 
+                };
+
+                socket.onerror = function(error) {
+                    console.error('WebSocket Error:', error); // The error object itself might be generic
+                    statusDiv.textContent = 'Connection error. Is the server running? Check browser console & server logs.';
+                    statusDiv.className = 'p-3 bg-red-700 text-red-100 rounded-lg text-sm';
+                    // Note: onerror is often followed by onclose. The onclose event might have more details.
+                };
+            }
+
+            sendMessageBtn.addEventListener('click', () => {
+                const message = messageInput.value.trim();
+                if (message && socket && socket.readyState === WebSocket.OPEN) {
+                    const messageObject = { type: 'moderator_message', content: message };
+                    socket.send(JSON.stringify(messageObject));
+                    console.log('Message sent:', message);
+                    
+                    const logEntry = document.createElement('div');
+                    logEntry.textContent = `Sent: ${message}`;
+                    logEntry.className = 'text-gray-300';
+                    sentMessagesLog.insertBefore(logEntry, sentMessagesLog.firstChild); 
+                    if (sentMessagesLog.children.length > 10) { 
+                        sentMessagesLog.removeChild(sentMessagesLog.lastChild);
+                    }
+
+                    messageInput.value = ''; 
+                } else if (!socket || socket.readyState !== WebSocket.OPEN) {
+                    console.log('WebSocket is not connected.');
+                    statusDiv.textContent = 'Not connected. Cannot send message.';
+                    statusDiv.className = 'p-3 bg-yellow-600 text-yellow-100 rounded-lg text-sm';
+                } else if (!message) {
+                    const originalPlaceholder = messageInput.placeholder;
+                    messageInput.placeholder = "Please enter a message!";
+                    setTimeout(() => { messageInput.placeholder = originalPlaceholder; }, 2000);
+                }
+            });
+            
+            messageInput.addEventListener('keypress', function(event) {
+                if (event.key === 'Enter') {
+                    event.preventDefault(); 
+                    sendMessageBtn.click();
+                }
+            });
+
+            // Initial connection attempt
+            connect();
+        });
+    </script>
+</body>
+</html>

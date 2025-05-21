@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Werewolf - Public Display</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        #messageDisplay {
+            font-size: 2.5rem; 
+            min-height: 100px; 
+            word-break: break-word; 
+        }
+        .message-enter {
+            opacity: 0;
+            transform: translateY(20px);
+            animation: fadeIn 0.5s forwards;
+        }
+        @keyframes fadeIn {
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white min-h-screen flex flex-col items-center justify-center p-6">
+    <div class="bg-gray-800 p-10 rounded-xl shadow-2xl w-full max-w-3xl text-center">
+        <h1 class="text-4xl font-bold mb-8 text-teal-400">Game Information</h1>
+        <div id="messageDisplay" class="p-6 bg-gray-700 rounded-lg text-teal-200">
+            Waiting for moderator...
+        </div>
+        <div class="mt-6">
+            <h2 class="text-lg font-semibold mb-2 text-teal-300">Connection Status:</h2>
+            <div id="status" class="p-3 bg-gray-700 rounded-lg text-sm">Connecting to server...</div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const messageDisplay = document.getElementById('messageDisplay');
+            const statusDiv = document.getElementById('status');
+            let socket;
+
+            function connect() {
+                // Ensure this URL is correct.
+                socket = new WebSocket('ws://localhost:8080');
+
+                socket.onopen = function(event) {
+                    console.log('Display connected to WebSocket server.');
+                    statusDiv.textContent = 'Connected to server.';
+                    statusDiv.className = 'p-3 bg-green-700 text-green-100 rounded-lg text-sm';
+                };
+
+                socket.onmessage = function(event) {
+                    console.log('Message received:', event.data);
+                    try {
+                        const messageData = JSON.parse(event.data);
+                        if (messageData && typeof messageData.content === 'string') { // Check content is a string
+                            messageDisplay.innerHTML = ''; 
+                            const newMessageElement = document.createElement('div');
+                            newMessageElement.textContent = messageData.content;
+                            newMessageElement.classList.add('message-enter');
+                            messageDisplay.appendChild(newMessageElement);
+                        } else {
+                             // Handle plain text messages or unexpected structure
+                            messageDisplay.textContent = event.data.toString();
+                        }
+                    } catch (e) {
+                        // If it's not JSON, display as plain text
+                        messageDisplay.textContent = event.data.toString();
+                    }
+                };
+
+                socket.onclose = function(event) {
+                    console.log('Disconnected from WebSocket server.');
+                    console.log(`WebSocket Close Details: Code=${event.code}, Reason='${event.reason}', WasClean=${event.wasClean}`);
+                    statusDiv.textContent = `Disconnected (Code: ${event.code}). Attempting to reconnect...`;
+                    statusDiv.className = 'p-3 bg-red-700 text-red-100 rounded-lg text-sm';
+                    messageDisplay.textContent = 'Connection lost. Trying to reconnect...';
+                    setTimeout(connect, 3000); 
+                };
+
+                socket.onerror = function(error) {
+                    console.error('WebSocket Error:', error);
+                    statusDiv.textContent = 'Connection error. Is the server running? Check browser console & server logs.';
+                    statusDiv.className = 'p-3 bg-red-700 text-red-100 rounded-lg text-sm';
+                    messageDisplay.textContent = 'Error connecting to the game server.';
+                };
+            }
+            
+            // Initial connection attempt
+            connect();
+        });
+    </script>
+</body>
+</html>
