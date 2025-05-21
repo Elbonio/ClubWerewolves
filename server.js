@@ -1,3 +1,4 @@
+```javascript
 // server.js
 // To run this:
 // 1. Make sure you have Node.js installed.
@@ -5,14 +6,55 @@
 // 3. Save this code as server.js and run from your terminal: node server.js
 
 const WebSocket = require('ws');
-const http = require('http'); // ADD THIS
-const fs = require('fs');     // ADD THIS
-const path = require('path'); // ADD THIS
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
+
+// --- HTTP Server to serve HTML files ---
+const server = http.createServer((req, res) => {
+    let filePath = '.' + req.url;
+    if (filePath === './') {
+        filePath = './moderator.html'; // Or an index page if you create one
+    }
+
+    // Determine the correct file to serve
+    if (req.url === '/' || req.url === '/moderator' || req.url === '/moderator.html') {
+        filePath = path.join(__dirname, 'moderator.html');
+    } else if (req.url === '/display' || req.url === '/display.html') {
+        filePath = path.join(__dirname, 'display.html');
+    } else {
+        res.writeHead(404);
+        res.end('File not found: ' + req.url); // Respond for unhandled paths
+        return;
+    }
+
+    const extname = String(path.extname(filePath)).toLowerCase();
+    const mimeTypes = {
+        '.html': 'text/html',
+    };
+    const contentType = mimeTypes[extname] || 'application/octet-stream';
+
+    fs.readFile(filePath, (error, content) => {
+        if (error) {
+            if (error.code == 'ENOENT') {
+                res.writeHead(404);
+                res.end('File not found: ' + filePath);
+            } else {
+                res.writeHead(500);
+                res.end('Sorry, check with the site admin for error: ' + error.code + ' ..\n');
+            }
+        } else {
+            res.writeHead(200, { 'Content-Type': contentType });
+            res.end(content, 'utf-8');
+        }
+    });
+});
+
+
 
 // Create a WebSocket server instance.
 // It will listen on port 8080 by default.
-const port = process.env.PORT || 8080; // NEW LINE - Use environment variable or fallback to 8080
-const wss = new WebSocket.Server({ port: parseInt(port) 
+const wss = new WebSocket.Server({ server }); // 'server' is the http.createServer instance
 
 // Keep track of all connected clients
 const clients = new Set();
@@ -33,9 +75,11 @@ wss.on('error', (error) => {
     }
 });
 
-// console.log(`WebSocket server started and listening on port ${wss.options.port}`); // OLD LINE
-wss.on('listening', () => { // MODIFIED
-    console.log(`WebSocket server started and listening on port ${port}`); // Use the port variable
+const port = process.env.PORT || 8080; // For dynamic port assignment by hosting
+server.listen(port, () => {
+    console.log(`HTTP and WebSocket server running on port ${port}`);
+    console.log(`Moderator panel: http://localhost:${port}/moderator.html`); // Or just /
+    console.log(`Display panel: http://localhost:${port}/display.html`);
 });
 
 wss.on('connection', function connection(ws, req) {
@@ -93,11 +137,3 @@ wss.on('connection', function connection(ws, req) {
         if (ws && typeof ws.terminate === 'function') {
             ws.terminate(); // Try to clean up the specific ws connection if it exists
         }
-    }
-});
-
-// The ping/pong mechanism was commented out previously and remains so.
-// For long-lived connections, especially over networks with aggressive proxies/firewalls,
-// a proper ping/pong or application-level keep-alive might be necessary.
-
-console.log('Initializing Werewolf Game WebSocket server...'); // This logs before 'listening' or 'error'
