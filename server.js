@@ -1,4 +1,3 @@
-```javascript
 // server.js
 // To run this:
 // 1. Make sure you have Node.js installed.
@@ -62,7 +61,7 @@ const server = http.createServer((req, res) => {
             res.end(content, 'utf-8');
         }
     });
-});
+}); // Closes http.createServer
 
 
 // --- WebSocket Server ---
@@ -90,7 +89,7 @@ wss.on('error', (error) => {
     if (error.code === 'EADDRINUSE') {
         process.exit(1); 
     }
-});
+}); // Closes wss.on('error')
 
 
 wss.on('connection', function connection(ws, req) {
@@ -121,22 +120,22 @@ wss.on('connection', function connection(ws, req) {
                             client.send(messageString);
                         }
                     }
-                });
+                }); // Closes forEach
             } catch (e) {
                 console.error('Error in "message" handler for client (' + clientIp + '):', e);
             }
-        });
+        }); // Closes ws.on('message')
 
         ws.on('close', (code, reason) => {
             const reasonString = reason.toString(); 
             console.log('Client (' + clientIp + ') disconnected. Code: ' + code + ', Reason: "' + reasonString + '".');
             clients.delete(ws); 
             console.log('Client from (' + clientIp + ') removed from set. Total clients: ' + clients.size);
-        });
+        }); // Closes ws.on('close')
 
         ws.on('error', (error) => {
             console.error('WebSocket error on client (' + clientIp + '):', error);
-        });
+        }); // Closes ws.on('error')
 
         console.log('Successfully set up event handlers for client (' + clientIp + ').');
 
@@ -156,6 +155,7 @@ server.listen(port, () => {
     console.log('HTTP and WebSocket server running on port ' + port);
     console.log('Moderator panel available at: http://localhost:' + port + '/moderator.html (or / or /moderator)');
     console.log('Display panel available at: http://localhost:' + port + '/display.html (or /display)');
-});
+}); // Closes server.listen callback
 
 console.log('Initializing Werewolf Game HTTP and WebSocket server...');
+// --- End of server.js ---
