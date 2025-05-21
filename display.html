@@ -45,7 +45,7 @@
 
             function connect() {
                 // Ensure this URL is correct.
-                socket = new WebSocket('ws://localhost:8080');
+                socket = new WebSocket('wss://clubwerewolvesmodtool.onrender.com');
 
                 socket.onopen = function(event) {
                     console.log('Display connected to WebSocket server.');

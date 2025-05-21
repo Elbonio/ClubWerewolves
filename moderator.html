@@ -48,7 +48,7 @@
                 // Ensure this URL is correct. If your server is not on localhost or port 8080, change this.
                 // For Glitch or other publicly hosted servers, you might use wss:// and a different host.
                 // Example: const socket = new WebSocket(location.protocol.replace("http", "ws") + "//" + location.host + "/socket_path_if_any");
-                socket = new WebSocket('ws://localhost:8080');
+                socket = new WebSocket('wss://clubwerewolvesmodtool.onrender.com');
 
 
                 socket.onopen = function(event) {
