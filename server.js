@@ -75,7 +75,6 @@ app.post('/api/games', (req, res) => {
         playersInGame: {}, // Keyed by player NAME: { roleName, roleDetails, status, id (from master list) }
         playerOrder: [],   // Array of player names
         currentPhase: 'setup',
-        // rolesAvailable: JSON.parse(JSON.stringify(ALL_ROLES_SERVER)), // Not strictly needed if ALL_ROLES_SERVER is const
         gameLog: [],
         seerPlayerName: null,
         werewolfNightTarget: null,
@@ -88,7 +87,6 @@ app.post('/api/games', (req, res) => {
 app.get('/api/games/:gameId', (req, res) => {
     const game = games[req.params.gameId];
     if (game) {
-        // Ensure playersInGame is an object, even if empty
         if (!game.playersInGame) game.playersInGame = {};
         if (!game.playerOrder) game.playerOrder = [];
         res.json(game);
@@ -98,7 +96,8 @@ app.get('/api/games/:gameId', (req, res) => {
 });
 
 app.post('/api/games/:gameId/players', (req, res) => {
-    const game = games[req.params.gameId];
+    const gameId = req.params.gameId;
+    const game = games[gameId];
     const { players: playerNamesFromClient } = req.body; 
 
     if (!game) return res.status(404).json({ message: 'Game not found.' });
@@ -108,31 +107,37 @@ app.post('/api/games/:gameId/players', (req, res) => {
     const newPlayerOrder = [];
 
     playerNamesFromClient.forEach(name => {
-        const masterPlayer = getPlayerByName(name); // Use helper
+        const masterPlayer = getPlayerByName(name); 
         if (masterPlayer) {
-            // Preserve existing role and status if player was already in game and roles are assigned
-            if (game.playersInGame[name] && game.playersInGame[name].roleName) {
+            // If player was already in game, try to preserve their existing data
+            if (game.playersInGame[name]) {
                 newPlayersInGame[name] = game.playersInGame[name];
-            } else { // New player to game, or roles not yet assigned for this player
+            } else { // New player to this specific game
                 newPlayersInGame[name] = { 
                     id: masterPlayer.id,
                     roleName: null, 
-                    roleDetails: null, // Will be populated by ALL_ROLES_SERVER details upon assignment
+                    roleDetails: null, 
                     status: 'alive' 
                 };
             }
             newPlayerOrder.push(name);
         } else {
-            console.warn("Player " + name + " from client list not found in master list. Skipping.");
+            console.warn("Player " + name + " from client list not found in master list. Skipping for game " + gameId);
         }
     });
     
     game.playersInGame = newPlayersInGame;
     game.playerOrder = newPlayerOrder;
-    // If players are removed, ensure seerPlayerName is still valid
+    
+    // Clean up seerPlayerName if the seer is no longer in the game
     if (game.seerPlayerName && !game.playersInGame[game.seerPlayerName]) {
         game.seerPlayerName = null;
     }
+    // Clean up werewolfNightTarget if the target is no longer in the game
+    if (game.werewolfNightTarget && !game.playersInGame[game.werewolfNightTarget]) {
+        game.werewolfNightTarget = null;
+    }
+
 
     console.log('Updated players for game ' + game.gameId + ':', game.playerOrder);
     res.status(200).json({ 
@@ -143,47 +148,58 @@ app.post('/api/games/:gameId/players', (req, res) => {
 });
 
 app.post('/api/games/:gameId/assign-roles', (req, res) => {
-    const game = games[req.params.gameId];
+    const gameId = req.params.gameId;
+    const game = games[gameId];
     if (!game) return res.status(404).json({ message: 'Game not found.' });
     if (!game.playerOrder || game.playerOrder.length === 0) {
         return res.status(400).json({ message: 'No players in the game to assign roles to.' });
     }
 
     let rolesToAssign = [];
-    game.seerPlayerName = null; // Reset before assignment
+    game.seerPlayerName = null; 
 
-    // Simplified role distribution (can be made more complex)
-    if (game.playerOrder.length >= 1) rolesToAssign.push(ALL_ROLES_SERVER.WEREWOLF);
-    if (game.playerOrder.length >= 2) rolesToAssign.push(ALL_ROLES_SERVER.SEER);
-    while (rolesToAssign.length < game.playerOrder.length) {
+    // Example role distribution logic (can be customized)
+    const numPlayers = game.playerOrder.length;
+    if (numPlayers >= 1) rolesToAssign.push(ALL_ROLES_SERVER.WEREWOLF);
+    if (numPlayers >= 3) rolesToAssign.push(ALL_ROLES_SERVER.SEER); // Seer added if 3+ players
+    // Add more werewolves based on player count if desired
+    // if (numPlayers >= 5) rolesToAssign.push(ALL_ROLES_SERVER.WEREWOLF); 
+    while (rolesToAssign.length < numPlayers) {
         rolesToAssign.push(ALL_ROLES_SERVER.VILLAGER);
     }
 
-    // Shuffle roles
     for (let i = rolesToAssign.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [rolesToAssign[i], rolesToAssign[j]] = [rolesToAssign[j], rolesToAssign[i]];
     }
-
-    const updatedPlayersInGame = { ...game.playersInGame }; // Start with existing player data (like IDs)
-
+    
+    // Create a new playersInGame object to ensure clean slate for roles and status
+    const newPlayersInGameData = {};
     game.playerOrder.forEach((playerName, index) => {
         const assignedRoleDetails = rolesToAssign[index];
-        updatedPlayersInGame[playerName] = {
-            ...(updatedPlayersInGame[playerName] || {}), // Preserve ID if it exists
+        const masterPlayer = getPlayerByName(playerName); // Get master player ID
+
+        newPlayersInGameData[playerName] = {
+            id: masterPlayer ? masterPlayer.id : 'unknown_id_' + playerName, // Fallback ID
             roleName: assignedRoleDetails.name,
-            roleDetails: assignedRoleDetails, // Store full role object
-            status: 'alive' // Ensure all are alive on role assignment
+            roleDetails: assignedRoleDetails, 
+            status: 'alive' 
         };
         if (assignedRoleDetails.name === "Seer") {
             game.seerPlayerName = playerName;
         }
     });
-    game.playersInGame = updatedPlayersInGame;
-    game.currentPhase = 'roles_assigned'; // Or directly to 'night' if preferred
+    game.playersInGame = newPlayersInGameData; // Replace with newly assigned roles
+    game.currentPhase = 'roles_assigned'; 
+    game.werewolfNightTarget = null; // Reset night target
     
     console.log('Roles assigned for game ' + game.gameId + ':', game.playersInGame);
-    res.status(200).json({ message: 'Roles assigned successfully.', playersInGame: game.playersInGame, seerPlayerName: game.seerPlayerName });
+    res.status(200).json({ 
+        message: 'Roles assigned successfully.', 
+        playersInGame: game.playersInGame, 
+        seerPlayerName: game.seerPlayerName,
+        currentPhase: game.currentPhase
+    });
 });
 
 app.post('/api/games/:gameId/player-status', (req, res) => {
@@ -197,15 +213,26 @@ app.post('/api/games/:gameId/player-status', (req, res) => {
 
     game.playersInGame[playerName].status = status;
     console.log('Status for ' + playerName + ' in game ' + game.gameId + ' set to ' + status);
+    // If reviving, ensure they are not still the werewolfNightTarget if it's night
+    if (status === 'alive' && game.werewolfNightTarget === playerName && game.currentPhase === 'night') {
+        // This scenario is tricky - usually revivals happen at day or by specific roles.
+        // For manual revive, we just change status. Night target remains until day processing.
+    }
     res.status(200).json({ message: 'Player status updated.', player: game.playersInGame[playerName] });
 });
 
-// --- Placeholder for Phase and Action Endpoints (to be detailed further) ---
 app.post('/api/games/:gameId/phase', (req, res) => {
     const game = games[req.params.gameId];
-    const { phase } = req.body; // e.g., 'night', 'day'
+    const { phase } = req.body; 
     if (!game) return res.status(404).json({ message: "Game not found" });
     if (!phase) return res.status(400).json({ message: "Phase is required" });
+    if (game.currentPhase === 'setup' && Object.keys(game.playersInGame).length === 0) {
+        return res.status(400).json({ message: "Cannot start phase. No players or roles assigned."});
+    }
+    if (game.currentPhase === 'setup' && !Object.values(game.playersInGame).some(p => p.roleName)) {
+         return res.status(400).json({ message: "Cannot start phase. Roles not assigned yet."});
+    }
+
 
     game.currentPhase = phase;
     let eliminationResult = { eliminatedPlayerName: null, specialInfo: null };
@@ -222,9 +249,11 @@ app.post('/api/games/:gameId/phase', (req, res) => {
                 console.log(game.werewolfNightTarget + " eliminated by werewolves in game " + game.gameId);
             } else {
                 eliminationResult.specialInfo = game.werewolfNightTarget + " was already eliminated.";
+                 console.log(game.werewolfNightTarget + " was already targeted but is eliminated in game " + game.gameId);
             }
         } else {
             eliminationResult.specialInfo = "No one was eliminated by werewolves.";
+             console.log("No werewolf elimination in game " + game.gameId);
         }
         game.werewolfNightTarget = null; // Clear after processing
     }
@@ -241,15 +270,20 @@ app.post('/api/games/:gameId/action', (req, res) => {
         if (!targetPlayerName || !game.playersInGame[targetPlayerName]) {
             return res.status(400).json({ message: "Invalid target for Seer." });
         }
-        const targetRoleDetails = game.playersInGame[targetPlayerName];
-        const alignmentMessage = targetRoleDetails.roleName === "Werewolf" ? "Is a Werewolf" : "Not a Werewolf";
+        // Ensure the Seer is alive and is the one performing the action (optional check, client should enforce)
+        // const seer = game.playersInGame[game.seerPlayerName];
+        // if(!seer || seer.status !== 'alive') return res.status(403).json({message: "Seer is not able to perform action."});
+
+        const targetData = game.playersInGame[targetPlayerName];
+        const alignmentMessage = targetData.roleDetails.alignment === "Werewolf" ? "Is a Werewolf" : "Not a Werewolf";
         console.log("Seer check on " + targetPlayerName + " in game " + game.gameId + ": " + alignmentMessage);
         return res.status(200).json({ alignmentMessage });
+
     } else if (actionType === 'werewolfTarget') {
         if (!targetPlayerName || !game.playersInGame[targetPlayerName] || game.playersInGame[targetPlayerName].status !== 'alive') {
-            return res.status(400).json({ message: "Invalid target for Werewolves." });
+            return res.status(400).json({ message: "Invalid target for Werewolves (must be alive)." });
         }
-        if (game.playersInGame[targetPlayerName].roleName === "Werewolf") {
+        if (game.playersInGame[targetPlayerName].roleName === "Werewolf") { // Assuming roleName is set
              return res.status(400).json({ message: "Werewolves cannot target other werewolves." });
         }
         game.werewolfNightTarget = targetPlayerName;
