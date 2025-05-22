@@ -8,7 +8,7 @@
     <style>
         body { font-family: 'Inter', sans-serif; }
         #messageDisplay {
-            font-size: 2.2rem; /* Slightly smaller base for more content */
+            font-size: 2.2rem; 
             min-height: 200px; 
             word-break: break-word; 
             display: flex;
@@ -21,6 +21,9 @@
         @keyframes fadeIn { to { opacity: 1; transform: translateY(0); } }
         
         .phase-message { font-size: 2.8rem; font-weight: 600; margin-bottom: 1rem;}
+        .elimination-message { font-size: 3rem; font-weight: bold; color: #ef4444; /* Red for elimination */ margin-bottom: 0.5rem; }
+        .eliminated-player-name { font-size: 3.5rem; color: #f87171; /* Lighter red */ }
+
         .role-name { font-size: 3.5rem; font-weight: bold; margin-bottom: 0.5rem; }
         .role-player { font-size: 2rem; margin-bottom: 0.5rem; color: #a7f3d0; }
         .role-description { font-size: 1.6rem; color: #cbd5e1; margin-bottom: 0.5rem; }
@@ -64,7 +67,7 @@
                     messageDisplay.innerHTML = ''; // Clear previous content
                     try {
                         const messageData = JSON.parse(event.data);
-                        const payload = messageData.payload; // Common shorthand
+                        const payload = messageData.payload; 
 
                         if (messageData.type === 'show_specific_role' && payload) {
                             displayTitle.textContent = payload.playerName + "'s Role";
@@ -88,7 +91,15 @@
                         } else if (messageData.type === 'manual_reveal' && payload) {
                             displayTitle.textContent = "Revelation!";
                             messageDisplay.innerHTML = `<div class="manual-reveal-text message-enter">${payload.alignment}</div>`;
-                        } else {
+                        } else if (messageData.type === 'player_eliminated' && payload) {
+                            displayTitle.textContent = "An Elimination!";
+                            messageDisplay.innerHTML = `
+                                <div class="elimination-message message-enter">Last night...</div>
+                                <div class="eliminated-player-name message-enter">${payload.playerName} was eliminated.</div>
+                            `;
+                             // Note: Role is NOT displayed as per user request
+                        }
+                        else {
                             displayTitle.textContent = "Game Information";
                             messageDisplay.innerHTML = '<div class="message-enter">Received unformatted message: ' + event.data.toString() + '</div>';
                         }
