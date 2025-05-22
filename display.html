@@ -9,8 +9,12 @@
         body { font-family: 'Inter', sans-serif; }
         #messageDisplay {
             font-size: 2.5rem; 
-            min-height: 100px; 
+            min-height: 150px; /* Adjusted for more content */
             word-break: break-word; 
+            display: flex;
+            flex-direction: column; /* Stack elements vertically */
+            justify-content: center;
+            align-items: center;
         }
         .message-enter {
             opacity: 0;
@@ -23,11 +27,15 @@
                 transform: translateY(0);
             }
         }
+        .role-name { font-size: 3rem; font-weight: bold; margin-bottom: 0.5rem; }
+        .role-player { font-size: 1.8rem; margin-bottom: 0.5rem; color: #a7f3d0; /* Lighter teal for player name */ }
+        .role-description { font-size: 1.5rem; color: #cbd5e1; /* Lighter gray for description */ }
+        .role-team { font-size: 1.2rem; margin-top: 1rem; font-style: italic; }
     </style>
 </head>
 <body class="bg-gray-900 text-white min-h-screen flex flex-col items-center justify-center p-6">
     <div class="bg-gray-800 p-10 rounded-xl shadow-2xl w-full max-w-3xl text-center">
-        <h1 class="text-4xl font-bold mb-8 text-teal-400">Game Information</h1>
+        <h1 id="displayTitle" class="text-4xl font-bold mb-8 text-teal-400">Game Information</h1>
         <div id="messageDisplay" class="p-6 bg-gray-700 rounded-lg text-teal-200">
             Waiting for moderator...
         </div>
@@ -41,11 +49,14 @@
         document.addEventListener('DOMContentLoaded', () => {
             const messageDisplay = document.getElementById('messageDisplay');
             const statusDiv = document.getElementById('status');
+            const displayTitle = document.getElementById('displayTitle');
             let socket;
 
             function connect() {
-                // Ensure this URL is correct.
-                socket = new WebSocket('wss://clubwerewolvesmodtool.onrender.com');
+                const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const wsHost = window.location.host;
+                socket = new WebSocket(wsProtocol + '//' + wsHost);
+
 
                 socket.onopen = function(event) {
                     console.log('Display connected to WebSocket server.');
@@ -55,28 +66,64 @@
 
                 socket.onmessage = function(event) {
                     console.log('Message received:', event.data);
+                    messageDisplay.innerHTML = ''; // Clear previous content
                     try {
                         const messageData = JSON.parse(event.data);
-                        if (messageData && typeof messageData.content === 'string') { // Check content is a string
-                            messageDisplay.innerHTML = ''; 
-                            const newMessageElement = document.createElement('div');
-                            newMessageElement.textContent = messageData.content;
-                            newMessageElement.classList.add('message-enter');
-                            messageDisplay.appendChild(newMessageElement);
+                        
+                        if (messageData.type === 'display_specific_role' && messageData.payload) {
+                            displayTitle.textContent = messageData.payload.playerName + "'s Turn";
+                            const payload = messageData.payload;
+                            
+                            const playerNameEl = document.createElement('div');
+                            playerNameEl.className = 'role-player message-enter';
+                            playerNameEl.textContent = payload.playerName;
+
+                            const roleNameEl = document.createElement('div');
+                            roleNameEl.className = 'role-name message-enter';
+                            roleNameEl.textContent = payload.roleName;
+                            
+                            const roleDescEl = document.createElement('div');
+                            roleDescEl.className = 'role-description message-enter';
+                            roleDescEl.textContent = payload.roleDescription;
+
+                            const roleTeamEl = document.createElement('div');
+                            roleTeamEl.className = 'role-team message-enter';
+                            roleTeamEl.textContent = 'Team: ' + payload.team;
+
+                            // messageDisplay.appendChild(playerNameEl); // Player name is in title now
+                            messageDisplay.appendChild(roleNameEl);
+                            messageDisplay.appendChild(roleDescEl);
+                            messageDisplay.appendChild(roleTeamEl);
+
+                        } else if (messageData.type === 'display_update' && messageData.content) {
+                            // General message from moderator (old functionality)
+                            displayTitle.textContent = "Game Information";
+                            const contentEl = document.createElement('div');
+                            contentEl.className = 'message-enter';
+                            contentEl.textContent = messageData.content;
+                            messageDisplay.appendChild(contentEl);
                         } else {
                              // Handle plain text messages or unexpected structure
-                            messageDisplay.textContent = event.data.toString();
+                            displayTitle.textContent = "Game Information";
+                            const plainTextEl = document.createElement('div');
+                            plainTextEl.className = 'message-enter';
+                            plainTextEl.textContent = event.data.toString();
+                            messageDisplay.appendChild(plainTextEl);
                         }
                     } catch (e) {
                         // If it's not JSON, display as plain text
-                        messageDisplay.textContent = event.data.toString();
+                        displayTitle.textContent = "Game Information";
+                        const errorTextEl = document.createElement('div');
+                        errorTextEl.className = 'message-enter';
+                        errorTextEl.textContent = event.data.toString();
+                        messageDisplay.appendChild(errorTextEl);
                     }
                 };
 
                 socket.onclose = function(event) {
                     console.log('Disconnected from WebSocket server.');
-                    console.log(`WebSocket Close Details: Code=${event.code}, Reason='${event.reason}', WasClean=${event.wasClean}`);
-                    statusDiv.textContent = `Disconnected (Code: ${event.code}). Attempting to reconnect...`;
+                    console.log('WebSocket Close Details: Code=' + event.code + ', Reason="' + event.reason + '", WasClean=' + event.wasClean);
+                    statusDiv.textContent = 'Disconnected (Code: ' + event.code + '). Attempting to reconnect...';
                     statusDiv.className = 'p-3 bg-red-700 text-red-100 rounded-lg text-sm';
                     messageDisplay.textContent = 'Connection lost. Trying to reconnect...';
                     setTimeout(connect, 3000); 

@@ -105,22 +105,28 @@ wss.on('connection', function connection(ws, req) {
                 const messageString = message.toString();
                 console.log('Received message from client (' + clientIp + '): ' + messageString);
                 
+                // Attempt to parse the message as JSON
+                let parsedMessage;
+                try {
+                    parsedMessage = JSON.parse(messageString);
+                } catch (e) {
+                    console.warn('Received non-JSON message from client (' + clientIp + '): ' + messageString);
+                    // Optionally, you could broadcast non-JSON messages if that's intended for some feature
+                    // For now, we'll only process known JSON message types
+                    return; 
+                }
+
+                // Broadcast to all connected clients.
+                // The client-side (display.html) will decide how to render based on message type.
                 clients.forEach(client => {
                     if (client.readyState === WebSocket.OPEN) {
-                        try {
-                            const parsedMessage = JSON.parse(messageString); 
-                            if (parsedMessage.type === 'moderator_message' && typeof parsedMessage.content === 'string') {
-                                client.send(JSON.stringify({ type: 'display_update', content: parsedMessage.content }));
-                            } else {
-                                console.warn('Client (' + clientIp + ') - Received unexpected message structure: ' + messageString);
-                                client.send(messageString); 
-                            }
-                        } catch (e) {
-                            console.warn('Client (' + clientIp + ') - Received non-JSON message or parse error during broadcast: ' + messageString + '. Broadcasting raw. Error: ' + e.message);
-                            client.send(messageString);
-                        }
+                        // We simply relay the parsed JSON message.
+                        // The original structure from moderator.html is preserved.
+                        // e.g., { type: 'show_specific_role', payload: {...} }
+                        // or { type: 'moderator_message', content: '...' }
+                        client.send(JSON.stringify(parsedMessage)); 
                     }
-                }); // Closes forEach
+                });
             } catch (e) {
                 console.error('Error in "message" handler for client (' + clientIp + '):', e);
             }

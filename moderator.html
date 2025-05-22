@@ -8,47 +8,94 @@
     <style>
         body { font-family: 'Inter', sans-serif; }
         .message-log-container { max-height: 200px; overflow-y: auto; }
+        .player-list-item { display: flex; justify-content: space-between; align-items: center; padding: 0.5rem; border-bottom: 1px solid #4A5568; }
+        .player-list-item:last-child { border-bottom: none; }
     </style>
 </head>
 <body class="bg-gray-900 text-white min-h-screen flex flex-col items-center justify-center p-4">
-    <div class="bg-gray-800 p-8 rounded-xl shadow-2xl w-full max-w-md">
-        <h1 class="text-3xl font-bold mb-6 text-center text-purple-400">Moderator Control Panel</h1>
+    <div class="bg-gray-800 p-8 rounded-xl shadow-2xl w-full max-w-2xl">
+        <h1 class="text-3xl font-bold mb-8 text-center text-purple-400">Moderator Control Panel</h1>
 
-        <div class="mb-6">
-            <label for="messageInput" class="block text-sm font-medium text-gray-300 mb-1">Message to Display:</label>
-            <input type="text" id="messageInput" class="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:ring-purple-500 focus:border-purple-500" placeholder="Enter message for public display...">
+        <div class="mb-8 p-6 bg-gray-700 rounded-lg">
+            <h2 class="text-2xl font-semibold mb-4 text-purple-300">Player Setup</h2>
+            <div class="flex gap-4 mb-4">
+                <input type="text" id="playerNameInput" class="flex-grow p-3 bg-gray-600 border border-gray-500 rounded-lg text-white placeholder-gray-400 focus:ring-purple-500 focus:border-purple-500" placeholder="Enter player name...">
+                <button id="addPlayerBtn" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-6 rounded-lg shadow-md transition">Add Player</button>
+            </div>
+            <div id="playerListContainer" class="mb-4">
+                <h3 class="text-lg font-medium text-gray-300 mb-2">Current Players:</h3>
+                <ul id="playerList" class="bg-gray-600 rounded-lg p-3 min-h-[50px]">
+                    </ul>
+            </div>
         </div>
 
-        <button id="sendMessage" class="w-full bg-purple-600 hover:bg-purple-700 text-white font-semibold py-3 px-4 rounded-lg shadow-md transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-opacity-50">
-            Send to Public Display
-        </button>
+        <div class="mb-8 p-6 bg-gray-700 rounded-lg">
+            <h2 class="text-2xl font-semibold mb-4 text-purple-300">Role Assignment</h2>
+            <p class="text-gray-400 mb-1">Define roles for the game. For simplicity, available roles are fixed for now.</p>
+            <p class="text-gray-400 mb-4 text-sm">Available roles: Villager, Werewolf, Seer.</p>
+            <button id="assignRolesBtn" class="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-4 rounded-lg shadow-md transition mb-4">Assign Roles & Start Game</button>
+            <div id="assignedRolesContainer" class="hidden">
+                <h3 class="text-lg font-medium text-gray-300 mb-2">Assigned Roles (Moderator View Only):</h3>
+                <ul id="assignedRolesList" class="bg-gray-600 rounded-lg p-3 min-h-[50px] space-y-2">
+                    </ul>
+            </div>
+        </div>
+        
+        <div class="mb-6 p-6 bg-gray-700 rounded-lg">
+            <h2 class="text-2xl font-semibold mb-4 text-purple-300">General Message</h2>
+            <label for="messageInput" class="block text-sm font-medium text-gray-300 mb-1">Message to Display:</label>
+            <input type="text" id="messageInput" class="w-full p-3 bg-gray-600 border border-gray-500 rounded-lg text-white placeholder-gray-400 focus:ring-purple-500 focus:border-purple-500" placeholder="Enter general message for public display...">
+            <button id="sendMessageBtn" class="mt-4 w-full bg-purple-600 hover:bg-purple-700 text-white font-semibold py-3 px-4 rounded-lg shadow-md transition">
+                Send General Message
+            </button>
+        </div>
 
-        <div class="mt-6">
+
+        <div class="mt-8 p-6 bg-gray-700 rounded-lg">
             <h2 class="text-xl font-semibold mb-2 text-purple-300">Connection Status:</h2>
-            <div id="status" class="p-3 bg-gray-700 rounded-lg text-sm">Connecting to server...</div>
+            <div id="status" class="p-3 bg-gray-600 rounded-lg text-sm">Connecting to server...</div>
         </div>
         
         <div class="mt-6">
             <h3 class="text-lg font-semibold mb-2 text-purple-300">Sent Messages Log:</h3>
-            <div id="sentMessagesLog" class="message-log-container p-3 bg-gray-700 rounded-lg text-sm space-y-1">
-                </div>
+            <div id="sentMessagesLog" class="message-log-container p-3 bg-gray-600 rounded-lg text-sm space-y-1">
+            </div>
         </div>
     </div>
 
     <script>
-        // Ensure DOM is fully loaded before trying to access elements
         document.addEventListener('DOMContentLoaded', () => {
+            // WebSocket elements
             const messageInput = document.getElementById('messageInput');
-            const sendMessageBtn = document.getElementById('sendMessage');
+            const sendMessageBtn = document.getElementById('sendMessageBtn');
             const statusDiv = document.getElementById('status');
             const sentMessagesLog = document.getElementById('sentMessagesLog');
             let socket;
 
+            // Player and Role Management elements
+            const playerNameInput = document.getElementById('playerNameInput');
+            const addPlayerBtn = document.getElementById('addPlayerBtn');
+            const playerList = document.getElementById('playerList');
+            const assignRolesBtn = document.getElementById('assignRolesBtn');
+            const assignedRolesContainer = document.getElementById('assignedRolesContainer');
+            const assignedRolesList = document.getElementById('assignedRolesList');
+
+            let players = [];
+            let gameRoles = {}; // To store { playerName: roleObject }
+
+            // Predefined roles (can be expanded)
+            const ALL_ROLES = {
+                VILLAGER: { name: "Villager", description: "Find and eliminate the werewolves.", team: "Good" },
+                WEREWOLF: { name: "Werewolf", description: "Eliminate the villagers to win.", team: "Evil" },
+                SEER: { name: "Seer", description: "Each night, you may learn the true role of one player.", team: "Good" }
+            };
+
             function connect() {
-                // Ensure this URL is correct. If your server is not on localhost or port 8080, change this.
-                // For Glitch or other publicly hosted servers, you might use wss:// and a different host.
-                // Example: const socket = new WebSocket(location.protocol.replace("http", "ws") + "//" + location.host + "/socket_path_if_any");
-                socket = new WebSocket('wss://clubwerewolvesmodtool.onrender.com');
+                const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const wsHost = window.location.host; // For Render, this will be your app's host
+                // If running locally and server.js is on a different port than the HTML serving, adjust wsHost.
+                // For this setup, server.js serves HTML, so host is the same.
+                socket = new WebSocket(wsProtocol + '//' + wsHost);
 
 
                 socket.onopen = function(event) {
@@ -58,62 +105,151 @@
                 };
 
                 socket.onmessage = function(event) {
-                    // Moderators typically send, but could receive confirmations or errors
                     console.log('Message from server:', event.data);
                 };
 
                 socket.onclose = function(event) {
                     console.log('Disconnected from WebSocket server.');
-                    console.log(`WebSocket Close Details: Code=${event.code}, Reason='${event.reason}', WasClean=${event.wasClean}`);
-                    statusDiv.textContent = `Disconnected (Code: ${event.code}). Attempting to reconnect...`;
+                    console.log('WebSocket Close Details: Code=' + event.code + ', Reason="' + event.reason + '", WasClean=' + event.wasClean);
+                    statusDiv.textContent = 'Disconnected (Code: ' + event.code + '). Attempting to reconnect...';
                     statusDiv.className = 'p-3 bg-red-700 text-red-100 rounded-lg text-sm';
-                    // Try to reconnect after a delay
                     setTimeout(connect, 3000); 
                 };
 
                 socket.onerror = function(error) {
-                    console.error('WebSocket Error:', error); // The error object itself might be generic
+                    console.error('WebSocket Error:', error);
                     statusDiv.textContent = 'Connection error. Is the server running? Check browser console & server logs.';
                     statusDiv.className = 'p-3 bg-red-700 text-red-100 rounded-lg text-sm';
-                    // Note: onerror is often followed by onclose. The onclose event might have more details.
                 };
             }
 
+            // Function to add to local message log
+            function logSentMessage(message, type = "General") {
+                 const logEntry = document.createElement('div');
+                 logEntry.textContent = type + ': ' + message;
+                 logEntry.className = 'text-gray-300';
+                 sentMessagesLog.insertBefore(logEntry, sentMessagesLog.firstChild); 
+                 if (sentMessagesLog.children.length > 10) { 
+                     sentMessagesLog.removeChild(sentMessagesLog.lastChild);
+                 }
+            }
+
+            // Send general message
             sendMessageBtn.addEventListener('click', () => {
                 const message = messageInput.value.trim();
                 if (message && socket && socket.readyState === WebSocket.OPEN) {
                     const messageObject = { type: 'moderator_message', content: message };
                     socket.send(JSON.stringify(messageObject));
-                    console.log('Message sent:', message);
-                    
-                    const logEntry = document.createElement('div');
-                    logEntry.textContent = `Sent: ${message}`;
-                    logEntry.className = 'text-gray-300';
-                    sentMessagesLog.insertBefore(logEntry, sentMessagesLog.firstChild); 
-                    if (sentMessagesLog.children.length > 10) { 
-                        sentMessagesLog.removeChild(sentMessagesLog.lastChild);
-                    }
-
+                    logSentMessage(message, "General");
                     messageInput.value = ''; 
                 } else if (!socket || socket.readyState !== WebSocket.OPEN) {
-                    console.log('WebSocket is not connected.');
                     statusDiv.textContent = 'Not connected. Cannot send message.';
                     statusDiv.className = 'p-3 bg-yellow-600 text-yellow-100 rounded-lg text-sm';
-                } else if (!message) {
-                    const originalPlaceholder = messageInput.placeholder;
-                    messageInput.placeholder = "Please enter a message!";
-                    setTimeout(() => { messageInput.placeholder = originalPlaceholder; }, 2000);
                 }
             });
-            
-            messageInput.addEventListener('keypress', function(event) {
-                if (event.key === 'Enter') {
-                    event.preventDefault(); 
-                    sendMessageBtn.click();
+             messageInput.addEventListener('keypress', (event) => event.key === 'Enter' && sendMessageBtn.click());
+
+
+            // Player Management Logic
+            addPlayerBtn.addEventListener('click', () => {
+                const playerName = playerNameInput.value.trim();
+                if (playerName && !players.includes(playerName)) {
+                    players.push(playerName);
+                    renderPlayerList();
+                    playerNameInput.value = '';
+                } else if (players.includes(playerName)) {
+                    alert("Player already added."); // Replace with a nicer modal later
+                }
+            });
+            playerNameInput.addEventListener('keypress', (event) => event.key === 'Enter' && addPlayerBtn.click());
+
+
+            function renderPlayerList() {
+                playerList.innerHTML = '';
+                if (players.length === 0) {
+                    playerList.innerHTML = '<li class="text-gray-400 italic">No players added yet.</li>';
+                    return;
+                }
+                players.forEach(name => {
+                    const li = document.createElement('li');
+                    li.textContent = name;
+                    li.className = 'text-white';
+                    playerList.appendChild(li);
+                });
+            }
+            renderPlayerList(); // Initial render
+
+            // Role Assignment Logic
+            assignRolesBtn.addEventListener('click', () => {
+                if (players.length < 3) { // Example minimum players
+                    alert("Need at least 3 players to assign roles."); // Replace with modal
+                    return;
+                }
+                // Simple role distribution: 1 Werewolf, 1 Seer, rest Villagers
+                // This needs to be more dynamic based on player count.
+                let rolesToAssign = [];
+                if (players.length >= 1) rolesToAssign.push(ALL_ROLES.WEREWOLF);
+                if (players.length >= 2) rolesToAssign.push(ALL_ROLES.SEER);
+                while (rolesToAssign.length < players.length) {
+                    rolesToAssign.push(ALL_ROLES.VILLAGER);
+                }
+
+                // Shuffle roles
+                for (let i = rolesToAssign.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [rolesToAssign[i], rolesToAssign[j]] = [rolesToAssign[j], rolesToAssign[i]];
+                }
+
+                gameRoles = {}; // Reset
+                players.forEach((playerName, index) => {
+                    gameRoles[playerName] = rolesToAssign[index];
+                });
+
+                renderAssignedRolesList();
+                assignedRolesContainer.classList.remove('hidden');
+                // Optionally send a message that game has started
+                if (socket && socket.readyState === WebSocket.OPEN) {
+                    socket.send(JSON.stringify({ type: 'moderator_message', content: "The game has started! Roles are assigned." }));
+                    logSentMessage("Roles assigned and game started.", "System");
                 }
             });
 
-            // Initial connection attempt
+            function renderAssignedRolesList() {
+                assignedRolesList.innerHTML = '';
+                for (const playerName in gameRoles) {
+                    const role = gameRoles[playerName];
+                    const li = document.createElement('li');
+                    li.className = 'player-list-item';
+
+                    const nameSpan = document.createElement('span');
+                    nameSpan.textContent = playerName + " (" + role.name + ")"; // Moderator sees role
+                    nameSpan.className = 'text-gray-200';
+
+                    const showRoleBtn = document.createElement('button');
+                    showRoleBtn.textContent = 'Show Role on Display';
+                    showRoleBtn.className = 'bg-indigo-500 hover:bg-indigo-600 text-white text-sm font-semibold py-1 px-3 rounded-md transition';
+                    showRoleBtn.onclick = () => {
+                        if (socket && socket.readyState === WebSocket.OPEN) {
+                            const payload = {
+                                playerName: playerName,
+                                roleName: role.name,
+                                roleDescription: role.description,
+                                team: role.team
+                            };
+                            socket.send(JSON.stringify({ type: 'show_specific_role', payload: payload }));
+                            logSentMessage("Showing " + playerName + "'s role.", "Role Reveal");
+                        } else {
+                            statusDiv.textContent = 'Not connected. Cannot show role.';
+                            statusDiv.className = 'p-3 bg-yellow-600 text-yellow-100 rounded-lg text-sm';
+                        }
+                    };
+                    li.appendChild(nameSpan);
+                    li.appendChild(showRoleBtn);
+                    assignedRolesList.appendChild(li);
+                }
+            }
+
+            // Initial connection
             connect();
         });
     </script>
