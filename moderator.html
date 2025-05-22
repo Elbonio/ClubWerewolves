@@ -161,8 +161,16 @@
             
             function sendWebSocketMessage(type, payload) {
                 if (socket && socket.readyState === WebSocket.OPEN) {
-                    socket.send(JSON.stringify({ type, ...payload }));
-                    logToModerator(payload.content || type + (payload.payload ? (': ' + (payload.payload.playerName || payload.payload.targetPlayer || payload.payload.alignment)) : ''), 'Sent');
+                    const messageToSend = { type, ...payload }; // Ensure type is at the top level
+                    socket.send(JSON.stringify(messageToSend));
+                    // Refined logging for clarity
+                    let logMessageContent = "Unknown action";
+                    if (payload.content) {
+                        logMessageContent = payload.content;
+                    } else if (payload.payload) {
+                        logMessageContent = payload.payload.playerName || payload.payload.targetPlayerName || payload.payload.alignment || JSON.stringify(payload.payload);
+                    }
+                    logToModerator(type + ': ' + logMessageContent, 'Sent');
                 } else {
                     statusDiv.textContent = 'Not connected. Cannot send message.';
                     statusDiv.className = 'p-3 bg-yellow-600 text-yellow-100 rounded-lg text-sm';
@@ -242,7 +250,15 @@
                     const showRoleBtn = document.createElement('button');
                     showRoleBtn.textContent = 'Show Role on Display';
                     showRoleBtn.className = 'bg-indigo-500 hover:bg-indigo-600 text-white text-sm font-semibold py-1 px-3 rounded-md transition';
-                    showRoleBtn.onclick = () => sendWebSocketMessage('show_specific_role', { payload: { ...role, playerName } });
+                    // CORRECTED PAYLOAD STRUCTURE
+                    showRoleBtn.onclick = () => sendWebSocketMessage('show_specific_role', { 
+                        payload: { 
+                            playerName: playerName,
+                            roleName: role.name, 
+                            roleDescription: role.description,
+                            team: role.team 
+                        } 
+                    });
                     li.appendChild(nameSpan);
                     li.appendChild(showRoleBtn);
                     assignedRolesList.appendChild(li);
@@ -267,13 +283,19 @@
             function updateSeerActionUI() {
                 if (currentPhase === 'night' && seerPlayerName && gameRoles[seerPlayerName]) {
                     seerActionContainer.classList.remove('hidden');
-                    seerTargetSelect.innerHTML = '';
-                    players.filter(p => p !== seerPlayerName).forEach(pName => {
-                        const option = document.createElement('option');
-                        option.value = pName;
-                        option.textContent = pName;
-                        seerTargetSelect.appendChild(option);
-                    });
+                    seerTargetSelect.innerHTML = ''; // Clear previous options
+                    if (players.length > 1) { // Only show targets if there are other players
+                        players.filter(p => p !== seerPlayerName).forEach(pName => {
+                            const option = document.createElement('option');
+                            option.value = pName;
+                            option.textContent = pName;
+                            seerTargetSelect.appendChild(option);
+                        });
+                        seerCheckTargetBtn.disabled = false;
+                    } else {
+                        seerTargetSelect.innerHTML = '<option value="">No other players to target</option>';
+                        seerCheckTargetBtn.disabled = true;
+                    }
                 } else {
                     seerActionContainer.classList.add('hidden');
                 }
