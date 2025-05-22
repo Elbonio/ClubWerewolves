@@ -8,15 +8,37 @@ const WebSocket = require('ws');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const express = require('express'); // Added Express
+const express = require('express'); 
 
-const app = express(); // Create an Express application
-app.use(express.json()); // Middleware to parse JSON request bodies
+const app = express(); 
+app.use(express.json()); 
 
-// --- In-Memory Data Stores (for persistence foundation) ---
-let masterPlayerList = []; // Array of player objects { id: uniqueId, name: "PlayerName" }
-let games = {}; // Object to store game states, keyed by gameId
-                // game: { gameId, gameName, playersInGame: { playerName: {role, status, etc.}}, currentPhase, log, ... }
+// --- In-Memory Data Stores ---
+let masterPlayerList = []; // Array of player objects { id: string, name: string }
+let games = {}; 
+// Example game structure:
+// games[gameId] = {
+//   gameId: "game_xyz",
+//   gameName: "My Werewolf Game",
+//   playersInGame: { // Object keyed by player NAME for easy lookup during game logic
+//     "Alice": { roleName: "Seer", roleDetails: {...}, status: "alive", id: "player_abc" },
+//     "Bob": { roleName: "Werewolf", roleDetails: {...}, status: "alive", id: "player_def" }
+//   },
+//   playerOrder: ["Alice", "Bob"], // To maintain an order if needed
+//   currentPhase: "setup", // 'setup', 'night', 'day', 'voting', 'finished'
+//   rolesAvailable: { ...ALL_ROLES_SERVER }, // Can be customized per game if needed
+//   gameLog: [],
+//   seerPlayerName: "Alice", // Name of the player who is the Seer
+//   werewolfNightTarget: null, // Name of the player targeted by werewolves
+//   settings: { /* game-specific settings */ }
+// };
+
+
+const ALL_ROLES_SERVER = {
+    VILLAGER: { name: "Villager", description: "Find and eliminate the werewolves.", team: "Good", alignment: "Village" },
+    WEREWOLF: { name: "Werewolf", description: "Eliminate the villagers to win.", team: "Evil", alignment: "Werewolf" },
+    SEER: { name: "Seer", description: "Each night, you may learn the alignment of one player.", team: "Good", alignment: "Village" }
+};
 
 // --- API Endpoints ---
 
@@ -28,11 +50,11 @@ app.get('/api/master-players', (req, res) => {
 app.post('/api/master-players', (req, res) => {
     const { name } = req.body;
     if (!name || typeof name !== 'string' || name.trim() === '') {
-        return res.status(400).json({ message: 'Player name is required and must be a non-empty string.' });
+        return res.status(400).json({ message: 'Player name is required.' });
     }
     const trimmedName = name.trim();
     if (masterPlayerList.find(p => p.name.toLowerCase() === trimmedName.toLowerCase())) {
-        return res.status(409).json({ message: 'Player with this name already exists in the master list.' });
+        return res.status(409).json({ message: 'Player already exists in master list.' });
     }
     const newPlayer = { id: 'player_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7), name: trimmedName };
     masterPlayerList.push(newPlayer);
@@ -42,7 +64,6 @@ app.post('/api/master-players', (req, res) => {
 
 // Game Management
 app.get('/api/games', (req, res) => {
-    // Return a simplified list of games for selection
     const gameList = Object.values(games).map(game => ({
         gameId: game.gameId,
         gameName: game.gameName,
@@ -58,52 +79,85 @@ app.post('/api/games', (req, res) => {
     const newGame = {
         gameId: newGameId,
         gameName: gameName || 'Werewolf Game ' + (Object.keys(games).length + 1),
-        playersInGame: {}, // { playerName: { roleName, roleDetails, status: 'alive' } }
-        currentPhase: 'setup', // 'setup', 'night', 'day', 'voting', 'finished'
-        rolesAvailable: { ...ALL_ROLES_SERVER }, // Copy of available roles for this game instance if needed
+        playersInGame: {}, // Stores player objects: { roleName, roleDetails, status, id } keyed by player name
+        playerOrder: [],   // Array of player names to maintain order
+        currentPhase: 'setup',
+        rolesAvailable: JSON.parse(JSON.stringify(ALL_ROLES_SERVER)), // Deep copy
         gameLog: [],
         seerPlayerName: null,
         werewolfNightTarget: null,
-        // Add other game-specific state holders here
     };
     games[newGameId] = newGame;
     console.log('New game created:', newGame.gameName, '(ID:', newGameId, ')');
     res.status(201).json({ gameId: newGame.gameId, gameName: newGame.gameName });
 });
 
-// Placeholder for ALL_ROLES on server-side if needed for game creation logic
-const ALL_ROLES_SERVER = {
-    VILLAGER: { name: "Villager", description: "Find and eliminate the werewolves.", team: "Good", alignment: "Village" },
-    WEREWOLF: { name: "Werewolf", description: "Eliminate the villagers to win.", team: "Evil", alignment: "Werewolf" },
-    SEER: { name: "Seer", description: "Each night, you may learn the alignment of one player.", team: "Good", alignment: "Village" }
-};
+app.get('/api/games/:gameId', (req, res) => {
+    const game = games[req.params.gameId];
+    if (game) {
+        res.json(game);
+    } else {
+        res.status(404).json({ message: 'Game not found.' });
+    }
+});
+
+// Endpoint to add/remove players from a specific game
+app.post('/api/games/:gameId/players', (req, res) => {
+    const game = games[req.params.gameId];
+    const { players: playerNames } = req.body; // Expecting an array of player names
+
+    if (!game) return res.status(404).json({ message: 'Game not found.' });
+    if (!Array.isArray(playerNames)) return res.status(400).json({ message: 'Invalid player list format.' });
+
+    // Reconstruct playersInGame and playerOrder based on the new list of names
+    const newPlayersInGame = {};
+    const newPlayerOrder = [];
+
+    playerNames.forEach(name => {
+        const masterPlayer = masterPlayerList.find(mp => mp.name === name);
+        if (masterPlayer) {
+            // If player was already in game, keep their existing role/status if game has started
+            // For now, if roles are assigned, this might reset them. 
+            // This endpoint is primarily for player *selection* before roles are assigned.
+            // Or, if roles are assigned, it should only allow adding, not removing easily to avoid state issues.
+            // For simplicity in this step, we'll assume this is for initial player setup or
+            // that roles would be reassigned if the player list changes significantly.
+            newPlayersInGame[name] = game.playersInGame[name] || { // Preserve existing player data if any
+                id: masterPlayer.id,
+                roleName: null, 
+                roleDetails: null,
+                status: 'alive' 
+            };
+            newPlayerOrder.push(name);
+        }
+    });
+    
+    game.playersInGame = newPlayersInGame;
+    game.playerOrder = newPlayerOrder;
+
+    console.log('Updated players for game ' + game.gameId + ':', game.playerOrder);
+    res.status(200).json({ message: 'Player list updated.', playersInGame: game.playersInGame, playerOrder: game.playerOrder });
+});
 
 
 // --- HTTP Server Setup (with Express) ---
-// Serve static HTML files
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'moderator.html')));
 app.get('/moderator', (req, res) => res.sendFile(path.join(__dirname, 'moderator.html')));
 app.get('/moderator.html', (req, res) => res.sendFile(path.join(__dirname, 'moderator.html')));
 app.get('/display', (req, res) => res.sendFile(path.join(__dirname, 'display.html')));
 app.get('/display.html', (req, res) => res.sendFile(path.join(__dirname, 'display.html')));
 
-// Fallback for 404 if not an API route and not a known HTML file
-// This should come after all other app.get/app.post for specific paths
 app.use((req, res, next) => {
-    // Check if the request path starts with /api, if so, it means an API route wasn't matched
     if (req.path.startsWith('/api/')) {
         return res.status(404).json({ message: 'API endpoint not found: ' + req.path });
     }
-    // If not an API route, let it fall through (though ideally all static files are explicitly defined)
-    // For a very simple setup, we can just send a generic 404 for non-API, non-HTML routes
     res.status(404).send('Resource not found: ' + req.url);
 });
 
-
-const server = http.createServer(app); // Use Express app to handle HTTP requests
+const server = http.createServer(app); 
 
 // --- WebSocket Server ---
-const wss = new WebSocket.Server({ server }); // Attach WebSocket server to the HTTP server
+const wss = new WebSocket.Server({ server }); 
 const clients = new Set();
 
 wss.on('error', (error) => {
@@ -139,6 +193,13 @@ wss.on('connection', function connection(ws, req) {
                     return;
                 }
                 // Relay WebSocket messages to all clients (display primarily)
+                // Add gameId to the message if it's not there, for context (though client should send it)
+                if (!parsedMessage.gameId && parsedMessage.type !== 'system_message') { // Example: don't add to generic system messages
+                    // This assumes the moderator client knows the current gameId and includes it.
+                    // If not, the server might need a way to associate WS connections with games.
+                    console.warn("WS message received without gameId:", parsedMessage);
+                }
+
                 clients.forEach(client => {
                     if (client.readyState === WebSocket.OPEN) {
                         client.send(JSON.stringify(parsedMessage));
