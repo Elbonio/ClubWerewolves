@@ -70,13 +70,15 @@
                     try {
                         const messageData = JSON.parse(event.data);
                         
-                        if (messageData.type === 'display_specific_role' && messageData.payload) {
-                            displayTitle.textContent = messageData.payload.playerName + "'s Turn";
+                        // CORRECTED: Check for 'show_specific_role'
+                        if (messageData.type === 'show_specific_role' && messageData.payload) {
+                            displayTitle.textContent = messageData.payload.playerName + "'s Role"; // Changed title
                             const payload = messageData.payload;
                             
-                            const playerNameEl = document.createElement('div');
-                            playerNameEl.className = 'role-player message-enter';
-                            playerNameEl.textContent = payload.playerName;
+                            // Player name is now part of the title, or can be added if desired
+                            // const playerNameEl = document.createElement('div');
+                            // playerNameEl.className = 'role-player message-enter';
+                            // playerNameEl.textContent = payload.playerName;
 
                             const roleNameEl = document.createElement('div');
                             roleNameEl.className = 'role-name message-enter';
@@ -90,32 +92,33 @@
                             roleTeamEl.className = 'role-team message-enter';
                             roleTeamEl.textContent = 'Team: ' + payload.team;
 
-                            // messageDisplay.appendChild(playerNameEl); // Player name is in title now
+                            // messageDisplay.appendChild(playerNameEl); 
                             messageDisplay.appendChild(roleNameEl);
                             messageDisplay.appendChild(roleDescEl);
                             messageDisplay.appendChild(roleTeamEl);
 
-                        } else if (messageData.type === 'display_update' && messageData.content) {
-                            // General message from moderator (old functionality)
+                        // CORRECTED: Check for 'moderator_message' for general updates
+                        } else if (messageData.type === 'moderator_message' && messageData.content) {
                             displayTitle.textContent = "Game Information";
                             const contentEl = document.createElement('div');
                             contentEl.className = 'message-enter';
                             contentEl.textContent = messageData.content;
                             messageDisplay.appendChild(contentEl);
                         } else {
-                             // Handle plain text messages or unexpected structure
+                             // Fallback for other unexpected message structures
                             displayTitle.textContent = "Game Information";
                             const plainTextEl = document.createElement('div');
                             plainTextEl.className = 'message-enter';
-                            plainTextEl.textContent = event.data.toString();
+                            plainTextEl.textContent = "Received unformatted message: " + event.data.toString();
                             messageDisplay.appendChild(plainTextEl);
                         }
                     } catch (e) {
-                        // If it's not JSON, display as plain text
+                        // If it's not JSON or another error occurs during processing
+                        console.error('Error processing message on display:', e);
                         displayTitle.textContent = "Game Information";
                         const errorTextEl = document.createElement('div');
                         errorTextEl.className = 'message-enter';
-                        errorTextEl.textContent = event.data.toString();
+                        errorTextEl.textContent = "Error displaying message. Raw: " + event.data.toString();
                         messageDisplay.appendChild(errorTextEl);
                     }
                 };
