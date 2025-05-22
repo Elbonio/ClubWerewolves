@@ -168,7 +168,7 @@
                  logEntry.textContent = '[' + type + '] ' + message;
                  logEntry.className = 'text-gray-300';
                  moderatorLog.insertBefore(logEntry, moderatorLog.firstChild); 
-                 if (moderatorLog.children.length > 20) { // Increased log size
+                 if (moderatorLog.children.length > 20) { 
                      moderatorLog.removeChild(moderatorLog.lastChild);
                  }
             }
@@ -276,12 +276,13 @@
                         eliminateBtn.textContent = 'Eliminate';
                         eliminateBtn.className = 'bg-red-500 hover:bg-red-600 text-white text-xs font-semibold py-1 px-2 rounded-md transition';
                         eliminateBtn.onclick = () => {
-                            if (confirm("Are you sure you want to eliminate " + playerName + "? This cannot be undone for the current night/day cycle logic.")) {
+                            // Using a simpler confirm for now, can be replaced with custom modal
+                            if (window.confirm("Are you sure you want to manually eliminate " + playerName + "?")) {
                                 gameRoles[playerName].status = 'eliminated';
                                 logToModerator(playerName + " manually marked as eliminated.", "Elimination");
                                 sendWebSocketMessage('player_eliminated', { payload: { playerName: playerName, source: 'manual' } });
-                                renderAssignedRolesList();
-                                updateNightActionSelectors();
+                                renderAssignedRolesList(); // Re-render to show status change
+                                updateNightActionSelectors(); // Update dropdowns
                             }
                         };
                         buttonContainer.appendChild(eliminateBtn);
@@ -295,7 +296,7 @@
             
             startNightBtn.addEventListener('click', () => {
                 currentPhase = 'night';
-                werewolfNightTarget = null; // Reset werewolf target at start of night
+                werewolfNightTarget = null; 
                 logToModerator("Night phase started.", "Phase");
                 sendWebSocketMessage('game_phase_change', { payload: { phase: 'night', message: "Night has fallen. Everyone, close your eyes." } });
                 nightActionsSection.classList.remove('hidden');
@@ -306,26 +307,38 @@
                 currentPhase = 'day';
                 logToModerator("Day phase started.", "Phase");
                 
-                if (werewolfNightTarget && gameRoles[werewolfNightTarget] && gameRoles[werewolfNightTarget].status === 'alive') {
-                    const eliminatedPlayerName = werewolfNightTarget;
-                    gameRoles[eliminatedPlayerName].status = 'eliminated';
-                    logToModerator(eliminatedPlayerName + " was eliminated by werewolves.", "Elimination");
-                    // Send only player name for elimination announcement
-                    sendWebSocketMessage('player_eliminated', { payload: { playerName: eliminatedPlayerName, source: 'werewolf' } });
-                } else if (werewolfNightTarget && gameRoles[werewolfNightTarget] && gameRoles[werewolfNightTarget].status === 'eliminated') {
-                    logToModerator(werewolfNightTarget + " was already eliminated. No werewolf elimination this night.", "Info");
-                     sendWebSocketMessage('moderator_message', { content: werewolfNightTarget + " was already eliminated. No one else died." });
-                }
-                else {
-                    logToModerator("No one was eliminated by werewolves this night.", "Info");
-                    sendWebSocketMessage('moderator_message', { content: "No one was eliminated by werewolves last night!" });
-                }
-                werewolfNightTarget = null; // Clear target after processing
+                let dayBreakMessageText = "Daybreak! Open your eyes and discuss.";
+                let eliminatedPlayerNameForDisplay = null;
+                let specialDayInfo = null; 
 
-                sendWebSocketMessage('game_phase_change', { payload: { phase: 'day', message: "Daybreak! Open your eyes and discuss." } });
+                if (werewolfNightTarget && gameRoles[werewolfNightTarget]) {
+                    if (gameRoles[werewolfNightTarget].status === 'alive') {
+                        const eliminatedPlayer = werewolfNightTarget;
+                        gameRoles[eliminatedPlayer].status = 'eliminated';
+                        eliminatedPlayerNameForDisplay = eliminatedPlayer;
+                        logToModerator(eliminatedPlayer + " was eliminated by werewolves.", "Elimination");
+                    } else { 
+                        specialDayInfo = werewolfNightTarget + " was already eliminated. No new werewolf elimination this night.";
+                        logToModerator(specialDayInfo, "Info");
+                    }
+                } else { 
+                    specialDayInfo = "No one was eliminated by werewolves last night!";
+                    logToModerator(specialDayInfo, "Info");
+                }
+                
+                werewolfNightTarget = null; // Clear target
+
+                const daybreakPayload = {
+                    phase: 'day',
+                    message: dayBreakMessageText,
+                    eliminatedPlayer: eliminatedPlayerNameForDisplay, // Will be null if no new elimination
+                    specialInfo: specialDayInfo // Will be null if there was a new elimination
+                };
+                sendWebSocketMessage('game_phase_change', { payload: daybreakPayload });
+                
                 nightActionsSection.classList.add('hidden');
-                renderAssignedRolesList(); // Re-render to show updated statuses
-                updateNightActionSelectors(); // Update selectors based on new statuses
+                renderAssignedRolesList(); 
+                updateNightActionSelectors(); 
             });
 
             function updateNightActionSelectors() {
@@ -357,7 +370,7 @@
                 if (currentPhase === 'night' && aliveWerewolvesCount > 0) {
                     werewolfActionContainer.classList.remove('hidden');
                     werewolfTargetSelect.innerHTML = '';
-                    const werewolfTargets = alivePlayers.filter(p => gameRoles[p] && gameRoles[p].name !== "Werewolf");
+                    const werewolfTargets = alivePlayers.filter(p => gameRoles[p] && gameRoles[p].name !== "Werewolf"); // Target non-werewolves
                      if (werewolfTargets.length > 0) {
                         werewolfTargets.forEach(pName => {
                             const option = document.createElement('option');
@@ -367,7 +380,7 @@
                         });
                         werewolfTargetBtn.disabled = false;
                     } else {
-                        werewolfTargetSelect.innerHTML = '<option value="">No non-werewolf players</option>';
+                        werewolfTargetSelect.innerHTML = '<option value="">No non-werewolf players to target</option>';
                         werewolfTargetBtn.disabled = true;
                     }
                 } else {
@@ -398,8 +411,6 @@
                 werewolfNightTarget = targetPlayerName;
                 logToModerator("Werewolves have targeted: " + targetPlayerName, "Werewolf Action");
                 sendWebSocketMessage('moderator_message', { content: "The werewolves have chosen their target..." });
-                // Optional: Disable further werewolf targeting for the night
-                // werewolfTargetBtn.disabled = true; 
             });
             
             manualShowIsWerewolfBtn.addEventListener('click', () => sendWebSocketMessage('manual_reveal', { payload: { alignment: "Is a Werewolf" } }));

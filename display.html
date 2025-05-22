@@ -23,6 +23,8 @@
         .phase-message { font-size: 2.8rem; font-weight: 600; margin-bottom: 1rem;}
         .elimination-message { font-size: 3rem; font-weight: bold; color: #ef4444; /* Red for elimination */ margin-bottom: 0.5rem; }
         .eliminated-player-name { font-size: 3.5rem; color: #f87171; /* Lighter red */ }
+        .special-info-message { font-size: 2.5rem; color: #facc15; /* Yellow for special info */ margin-bottom: 1rem; }
+
 
         .role-name { font-size: 3.5rem; font-weight: bold; margin-bottom: 0.5rem; }
         .role-player { font-size: 2rem; margin-bottom: 0.5rem; color: #a7f3d0; }
@@ -81,7 +83,25 @@
                             messageDisplay.innerHTML = `<div class="message-enter">${messageData.content}</div>`;
                         } else if (messageData.type === 'game_phase_change' && payload) {
                             displayTitle.textContent = payload.phase.charAt(0).toUpperCase() + payload.phase.slice(1) + " Phase";
-                            messageDisplay.innerHTML = `<div class="phase-message message-enter">${payload.message}</div>`;
+                            let htmlContent = "";
+                            
+                            if (payload.phase === 'day') {
+                                if (payload.eliminatedPlayer) {
+                                    htmlContent += `
+                                        <div class="elimination-message message-enter">Last night...</div>
+                                        <div class="eliminated-player-name message-enter">${payload.eliminatedPlayer} was eliminated.</div>
+                                    `;
+                                } else if (payload.specialInfo) {
+                                    htmlContent += `<div class="special-info-message message-enter">${payload.specialInfo}</div>`;
+                                }
+                                // Add a separator if there's an elimination/special message AND a daybreak message
+                                if (htmlContent && payload.message) {
+                                     htmlContent += '<hr class="my-4 border-gray-600 w-1/2 mx-auto">';
+                                }
+                            }
+                            htmlContent += `<div class="phase-message message-enter">${payload.message}</div>`;
+                            messageDisplay.innerHTML = htmlContent;
+
                         } else if (messageData.type === 'seer_check_result' && payload) {
                             displayTitle.textContent = "Seer's Vision";
                             messageDisplay.innerHTML = `
@@ -91,13 +111,13 @@
                         } else if (messageData.type === 'manual_reveal' && payload) {
                             displayTitle.textContent = "Revelation!";
                             messageDisplay.innerHTML = `<div class="manual-reveal-text message-enter">${payload.alignment}</div>`;
-                        } else if (messageData.type === 'player_eliminated' && payload) {
-                            displayTitle.textContent = "An Elimination!";
+                        } else if (messageData.type === 'player_eliminated' && payload) { // For manual eliminations
+                            displayTitle.textContent = "A Player is Out!";
+                            let eliminationContext = payload.source === 'manual' ? "The Moderator has announced:" : "An event occurred:";
                             messageDisplay.innerHTML = `
-                                <div class="elimination-message message-enter">Last night...</div>
+                                <div class="elimination-message message-enter">${eliminationContext}</div>
                                 <div class="eliminated-player-name message-enter">${payload.playerName} was eliminated.</div>
                             `;
-                             // Note: Role is NOT displayed as per user request
                         }
                         else {
                             displayTitle.textContent = "Game Information";
