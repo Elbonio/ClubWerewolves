@@ -21,9 +21,11 @@
         @keyframes fadeIn { to { opacity: 1; transform: translateY(0); } }
         
         .phase-message { font-size: 2.8rem; font-weight: 600; margin-bottom: 1rem;}
-        .elimination-message { font-size: 3rem; font-weight: bold; color: #ef4444; /* Red for elimination */ margin-bottom: 0.5rem; }
-        .eliminated-player-name { font-size: 3.5rem; color: #f87171; /* Lighter red */ }
-        .special-info-message { font-size: 2.5rem; color: #facc15; /* Yellow for special info */ margin-bottom: 1rem; }
+        .elimination-message { font-size: 3rem; font-weight: bold; color: #ef4444; margin-bottom: 0.5rem; }
+        .eliminated-player-name { font-size: 3.5rem; color: #f87171; }
+        .special-info-message { font-size: 2.5rem; color: #facc15; margin-bottom: 1rem; }
+        .game-over-message { font-size: 4rem; font-weight: bold; color: #fde047; }
+        .winning-team-message { font-size: 3rem; color: #a7f3d0; margin-top: 0.5rem; }
 
 
         .role-name { font-size: 3.5rem; font-weight: bold; margin-bottom: 0.5rem; }
@@ -33,6 +35,13 @@
         .seer-result-target { font-size: 2rem; color: #e0e7ff; margin-bottom: 0.5rem; }
         .seer-result-alignment { font-size: 3rem; font-weight: bold; color: #fde047; }
         .manual-reveal-text { font-size: 3.5rem; font-weight: bold; color: #fde047; }
+
+        .voting-title { font-size: 2.5rem; margin-bottom: 1rem; color: #fde047;}
+        .vote-item-display { display: flex; flex-direction: column; align-items: center; margin-bottom: 0.75rem; padding: 0.5rem; border-radius: 0.25rem; width: 90%;}
+        .vote-player-name-display { font-size: 1.8rem; color: #e0e7ff; }
+        .vote-bar-display-container { width: 80%; background-color: #4A5568; border-radius: 0.25rem; height: 25px; margin-top: 0.25rem; overflow: hidden; border: 1px solid #374151;}
+        .vote-bar-display { background-color: #60A5FA; height: 100%; text-align: center; line-height:25px; color: white; font-size: 1rem; white-space: nowrap; transition: width 0.3s ease-in-out;}
+        .leading-vote-display .vote-bar-display-container { border: 2px solid #FBBF24; } /* Highlight leading vote */
     </style>
 </head>
 <body class="bg-gray-900 text-white min-h-screen flex flex-col items-center justify-center p-6">
@@ -66,10 +75,11 @@
 
                 socket.onmessage = function(event) {
                     console.log('Display received:', event.data);
-                    messageDisplay.innerHTML = ''; // Clear previous content
+                    messageDisplay.innerHTML = ''; 
                     try {
                         const messageData = JSON.parse(event.data);
                         const payload = messageData.payload; 
+                        const content = messageData.content; // For general moderator_message
 
                         if (messageData.type === 'show_specific_role' && payload) {
                             displayTitle.textContent = payload.playerName + "'s Role";
@@ -78,13 +88,12 @@
                                 <div class="role-description message-enter">${payload.roleDescription}</div>
                                 <div class="role-team message-enter">Team: ${payload.team}</div>
                             `;
-                        } else if (messageData.type === 'moderator_message' && messageData.content) {
+                        } else if (messageData.type === 'moderator_message' && content) {
                             displayTitle.textContent = "Game Information";
-                            messageDisplay.innerHTML = `<div class="message-enter">${messageData.content}</div>`;
+                            messageDisplay.innerHTML = `<div class="message-enter">${content}</div>`;
                         } else if (messageData.type === 'game_phase_change' && payload) {
                             displayTitle.textContent = payload.phase.charAt(0).toUpperCase() + payload.phase.slice(1) + " Phase";
                             let htmlContent = "";
-                            
                             if (payload.phase === 'day') {
                                 if (payload.eliminatedPlayer) {
                                     htmlContent += `
@@ -94,14 +103,10 @@
                                 } else if (payload.specialInfo) {
                                     htmlContent += `<div class="special-info-message message-enter">${payload.specialInfo}</div>`;
                                 }
-                                // Add a separator if there's an elimination/special message AND a daybreak message
-                                if (htmlContent && payload.message) {
-                                     htmlContent += '<hr class="my-4 border-gray-600 w-1/2 mx-auto">';
-                                }
+                                if (htmlContent && payload.message) htmlContent += '<hr class="my-4 border-gray-600 w-1/2 mx-auto">';
                             }
                             htmlContent += `<div class="phase-message message-enter">${payload.message}</div>`;
                             messageDisplay.innerHTML = htmlContent;
-
                         } else if (messageData.type === 'seer_check_result' && payload) {
                             displayTitle.textContent = "Seer's Vision";
                             messageDisplay.innerHTML = `
@@ -111,12 +116,43 @@
                         } else if (messageData.type === 'manual_reveal' && payload) {
                             displayTitle.textContent = "Revelation!";
                             messageDisplay.innerHTML = `<div class="manual-reveal-text message-enter">${payload.alignment}</div>`;
-                        } else if (messageData.type === 'player_eliminated' && payload) { // For manual eliminations
+                        } else if (messageData.type === 'player_eliminated' && payload) { 
                             displayTitle.textContent = "A Player is Out!";
-                            let eliminationContext = payload.source === 'manual' ? "The Moderator has announced:" : "An event occurred:";
+                            let eliminationContext = payload.source === 'manual' ? "The Moderator has announced:" : (payload.source === 'vote' ? "After the vote:" : "An event occurred:");
                             messageDisplay.innerHTML = `
                                 <div class="elimination-message message-enter">${eliminationContext}</div>
                                 <div class="eliminated-player-name message-enter">${payload.playerName} was eliminated.</div>
+                            `;
+                        } else if (messageData.type === 'voting_update' && payload) {
+                            displayTitle.textContent = "Voting in Progress";
+                            let votingHTML = '<div class="voting-title message-enter">Players on Trial:</div>';
+                            let maxVotes = 0;
+                            if (payload.votes && Object.keys(payload.votes).length > 0) {
+                                maxVotes = Math.max(...Object.values(payload.votes));
+                            }
+
+                            (payload.playersOnTrial || []).forEach(playerName => {
+                                const votes = payload.votes[playerName] || 0;
+                                const barWidth = maxVotes > 0 ? (votes / maxVotes) * 100 : 0;
+                                votingHTML += `
+                                    <div class="vote-item-display message-enter ${votes > 0 && votes === maxVotes ? 'leading-vote-display' : ''}">
+                                        <span class="vote-player-name-display">${playerName}</span>
+                                        <div class="vote-bar-display-container">
+                                            <div class="vote-bar-display" style="width: ${Math.min(barWidth, 100)}%;">${votes}</div>
+                                        </div>
+                                    </div>
+                                `;
+                            });
+                            if ((payload.playersOnTrial || []).length === 0) {
+                                votingHTML += '<p class="text-gray-400 italic message-enter">No players currently on trial.</p>';
+                            }
+                            messageDisplay.innerHTML = votingHTML;
+                        } else if (messageData.type === 'game_over' && payload) {
+                            displayTitle.textContent = "GAME OVER!";
+                            messageDisplay.innerHTML = `
+                                <div class="game-over-message message-enter">GAME OVER!</div>
+                                <div class="winning-team-message message-enter">${payload.winningTeam} Wins!</div>
+                                <div class="message-enter mt-2 text-lg">${payload.reason || ''}</div>
                             `;
                         }
                         else {
@@ -142,7 +178,7 @@
                     messageDisplay.textContent = 'Error connecting to the game server.';
                 };
             }
-            connect(); // Initial connection
+            connect(); 
         });
     </script>
 </body>
