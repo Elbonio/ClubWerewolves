@@ -128,14 +128,13 @@
         let localMasterPlayers = []; // Master list of all players {id, name}
         let localGameList = [];      // List of all games {gameId, gameName, ...}
         
-        // State for the currently loaded game
+        // State for the currently loaded game - these will be populated from server
         let playersInCurrentGame = []; // Array of player names in the active game
-        let gameRoles = {};            // { playerName: {roleName, description, team, alignment, status} }
+        let gameRoles = {};            // Server's playersInGame object: { playerName: {roleName, roleDetails, status, id} }
         let currentPhase = 'setup';    // 'setup', 'night', 'day'
-        let seerPlayerName = null;
-        let werewolfNightTarget = null;
+        // seerPlayerName and werewolfNightTarget will also be part of the server's game state
 
-        const ALL_ROLES_CONFIG = { // Renamed to avoid conflict with server-side if any
+        const ALL_ROLES_CONFIG = { 
             VILLAGER: { name: "Villager", description: "Find and eliminate the werewolves.", team: "Good", alignment: "Village" },
             WEREWOLF: { name: "Werewolf", description: "Eliminate the villagers to win.", team: "Evil", alignment: "Werewolf" },
             SEER: { name: "Seer", description: "Each night, you may learn the alignment of one player.", team: "Good", alignment: "Village" }
@@ -181,8 +180,7 @@
             const werewolfTargetBtn = document.getElementById('werewolfTargetBtn');
 
             const manualRevealSection = document.getElementById('manualRevealSection');
-            // ... (manual reveal buttons already declared)
-
+            
             function connectWebSocket() {
                 const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
                 const wsHost = window.location.host;
@@ -240,7 +238,7 @@
                         updateStatus('API request failed: ' + response.status, 'error');
                         return null;
                     }
-                    if (response.status === 204) return true; // No content for some successful updates
+                    if (response.status === 204) return true; 
                     return response.json();
                 } catch (error) {
                     logToModerator(error.message, 'Fetch Error');
@@ -276,16 +274,14 @@
                     currentLoadedGameId = gameId;
                     currentGameInfo.textContent = 'Loaded Game: ' + gameData.gameName + ' (ID: ' + gameId + ')';
                     
-                    // Populate client-side state from server
-                    playersInCurrentGame = Object.keys(gameData.playersInGame || {});
-                    gameRoles = gameData.playersInGame || {}; // This now includes role and status
+                    playersInCurrentGame = gameData.playerOrder || Object.keys(gameData.playersInGame || {});
+                    gameRoles = gameData.playersInGame || {}; 
                     currentPhase = gameData.currentPhase || 'setup';
-                    seerPlayerName = gameData.seerPlayerName || null;
-                    werewolfNightTarget = gameData.werewolfNightTarget || null;
-                    // TODO: Load gameLog if needed: localGameLog = gameData.gameLog || [];
+                    // These will be set by server if game is in progress
+                    // seerPlayerName = gameData.seerPlayerName || null; 
+                    // werewolfNightTarget = gameData.werewolfNightTarget || null;
 
                     logToModerator('Successfully loaded game state for ' + gameData.gameName, 'System');
-                    
                     updateUIAfterGameLoad();
                 } else {
                     logToModerator('Failed to load game data for ' + gameId, 'Error');
@@ -304,27 +300,31 @@
                 currentGameSetupSection.classList.remove('hidden');
                 currentRoleAssignmentSection.classList.remove('hidden');
                 
-                renderMasterPlayerSelectionForGame(); // Update checkboxes based on playersInCurrentGame
+                renderMasterPlayerSelectionForGame(); 
                 renderPlayerListForCurrentGame();
                 renderAssignedRolesList(); 
                 
-                if (Object.keys(gameRoles).length > 0 && playersInCurrentGame.length > 0) { // If roles are assigned
+                // Determine if roles have actually been assigned for this game
+                const rolesAreAssigned = playersInCurrentGame.length > 0 && 
+                                         playersInCurrentGame.every(pName => gameRoles[pName] && gameRoles[pName].roleName);
+
+                if (rolesAreAssigned) {
                     gamePhaseSection.classList.remove('hidden');
                     manualRevealSection.classList.remove('hidden');
+                    assignedRolesContainer.classList.remove('hidden'); // Show assigned roles
                     if (currentPhase === 'night') {
                         nightActionsSection.classList.remove('hidden');
                     } else {
                         nightActionsSection.classList.add('hidden');
                     }
-                } else { // Roles not yet assigned
+                } else { 
                     gamePhaseSection.classList.add('hidden');
                     nightActionsSection.classList.add('hidden');
                     manualRevealSection.classList.add('hidden');
-                    assignedRolesContainer.classList.add('hidden');
+                    assignedRolesContainer.classList.add('hidden'); // Hide if no roles
                 }
                 updateNightActionSelectors();
 
-                // Highlight selected game in the list
                 Array.from(existingGamesList.children).forEach(child => {
                     child.classList.remove('selected-game');
                     if (child.dataset.gameId === currentLoadedGameId) {
@@ -335,12 +335,6 @@
 
             function hideAllGameSpecificSections() {
                 currentGameSpecificsSection.classList.add('hidden');
-                // currentGameSetupSection.classList.add('hidden');
-                // currentRoleAssignmentSection.classList.add('hidden');
-                // assignedRolesContainer.classList.add('hidden');
-                // gamePhaseSection.classList.add('hidden');
-                // nightActionsSection.classList.add('hidden');
-                // manualRevealSection.classList.add('hidden');
             }
 
             createNewGameBtn.addEventListener('click', async () => {
@@ -353,25 +347,25 @@
                 if (newGame) {
                     logToModerator('Created new game: ' + newGame.gameName, 'System');
                     newGameNameInput.value = '';
-                    await loadGamesList(); // Refresh the list
-                    loadSpecificGame(newGame.gameId); // Automatically load the new game
+                    await loadGamesList(); 
+                    loadSpecificGame(newGame.gameId); 
                 }
             });
 
             async function loadMasterPlayers() {
                 const playersData = await fetchFromServer('/api/master-players');
                 if (playersData) {
-                    localMasterPlayers = playersData; // Assuming server returns array of {id, name}
+                    localMasterPlayers = playersData; 
                     masterPlayerDisplayList.innerHTML = '';
                      if (localMasterPlayers.length === 0) {
                         masterPlayerDisplayList.innerHTML = '<li class="text-gray-400 italic">No players in master list.</li>';
                     }
                     localMasterPlayers.forEach(player => {
                         const li = document.createElement('li');
-                        li.textContent = player.name; // Display name
+                        li.textContent = player.name; 
                         masterPlayerDisplayList.appendChild(li);
                     });
-                    renderMasterPlayerSelectionForGame(); // Update checkboxes if a game is loaded
+                    renderMasterPlayerSelectionForGame(); 
                 }
             }
             
@@ -393,18 +387,20 @@
             
             function renderMasterPlayerSelectionForGame() {
                 masterPlayerSelectionForGame.innerHTML = '';
+                if (!currentLoadedGameId) return; // Don't render if no game selected
+
                 if (localMasterPlayers.length === 0) {
                      masterPlayerSelectionForGame.innerHTML = '<p class="text-gray-400 italic">Add players to the Master List first.</p>';
                      return;
                 }
-                localMasterPlayers.forEach(player => { // player is {id, name}
+                localMasterPlayers.forEach(player => { 
                     const div = document.createElement('div');
                     div.className = 'flex items-center gap-2 p-1';
                     const checkbox = document.createElement('input');
                     checkbox.type = 'checkbox';
-                    checkbox.id = 'masterPlayerSelect-' + player.id; 
-                    checkbox.value = player.name; // Use name for simplicity in current game logic
-                    checkbox.dataset.playerId = player.id; // Store id if needed for server
+                    checkbox.id = 'masterPlayerSelect-' + player.id + '-' + currentLoadedGameId; // Make ID unique per game context
+                    checkbox.value = player.name; 
+                    checkbox.dataset.playerId = player.id; 
                     checkbox.className = 'form-checkbox h-5 w-5 text-purple-600 bg-gray-700 border-gray-500 rounded focus:ring-purple-500';
                     
                     checkbox.checked = playersInCurrentGame.includes(player.name);
@@ -426,30 +422,30 @@
                     logToModerator("No game loaded to add/remove players.", "Error");
                     return;
                 }
-                let updatedPlayerList = [...playersInCurrentGame];
+                let updatedPlayerListNames = [...playersInCurrentGame];
                 if (isSelected) {
-                    if (!updatedPlayerList.includes(playerName)) {
-                        updatedPlayerList.push(playerName);
+                    if (!updatedPlayerListNames.includes(playerName)) {
+                        updatedPlayerListNames.push(playerName);
                     }
                 } else {
-                    updatedPlayerList = updatedPlayerList.filter(p => p !== playerName);
+                    updatedPlayerListNames = updatedPlayerListNames.filter(p => p !== playerName);
                 }
 
-                // API call to update server
                 const result = await fetchFromServer('/api/games/' + currentLoadedGameId + '/players', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ players: updatedPlayerList })
+                    body: JSON.stringify({ players: updatedPlayerListNames }) // Send array of names
                 });
 
-                if (result) {
-                    playersInCurrentGame = updatedPlayerList; // Update local state on success
+                if (result && result.playersInGame) { // Server should return updated game state or player list
+                    playersInCurrentGame = result.playerOrder || Object.keys(result.playersInGame);
+                    gameRoles = result.playersInGame; // Update local gameRoles from server
                     logToModerator('Player list for game ' + currentLoadedGameId + ' updated on server.', 'System');
                     renderPlayerListForCurrentGame();
+                    renderMasterPlayerSelectionForGame(); // Re-render checkboxes to reflect new state
                 } else {
                     logToModerator('Failed to update player list on server.', 'Error');
-                    // Revert checkbox if server update failed - or reload game state
-                    loadSpecificGame(currentLoadedGameId); // Simplest way to ensure consistency
+                    loadSpecificGame(currentLoadedGameId); 
                 }
             }
 
@@ -458,71 +454,57 @@
                     ? playersInCurrentGame.map(name => '<li class="text-white">' + name + '</li>').join('') 
                     : '<li class="text-gray-400 italic">No players selected for this game yet. Add them from the Master List above.</li>';
             }
-
-            // --- Role Assignment, Phase Changes, Night Actions ---
-            // These functions will now need to be adapted to:
-            // 1. Check currentLoadedGameId.
-            // 2. Send requests to the server (e.g., POST /api/games/:gameId/assign-roles).
-            // 3. On server success, call loadSpecificGame(currentLoadedGameId) to refresh the UI with new state.
             
             assignRolesBtn.addEventListener('click', async () => {
                 if (!currentLoadedGameId) { logToModerator("No game loaded.", "Error"); return; }
                 if (playersInCurrentGame.length === 0) { logToModerator("Add players to the game first.", "Warning"); return; }
 
-                // For now, role assignment logic remains client-side for demonstration.
-                // This should ideally be a server-side operation.
-                // POST /api/games/:gameId/assign-roles with playersInCurrentGame
-                // Server responds with the updated gameRoles, or client re-fetches.
-                logToModerator("Assigning roles (client-side for now)...", "System");
-                let rolesToAssign = [];
-                seerPlayerName = null; // Reset
-                if (playersInCurrentGame.length >= 1) rolesToAssign.push(ALL_ROLES_CONFIG.WEREWOLF);
-                if (playersInCurrentGame.length >= 2) rolesToAssign.push(ALL_ROLES_CONFIG.SEER);
-                while (rolesToAssign.length < playersInCurrentGame.length) {
-                    rolesToAssign.push(ALL_ROLES_CONFIG.VILLAGER);
-                }
-                for (let i = rolesToAssign.length - 1; i > 0; i--) {
-                    const j = Math.floor(Math.random() * (i + 1));
-                    [rolesToAssign[i], rolesToAssign[j]] = [rolesToAssign[j], rolesToAssign[i]];
-                }
-                
-                const newGameRoles = {};
-                playersInCurrentGame.forEach((playerName, index) => {
-                    newGameRoles[playerName] = { ...rolesToAssign[index], status: 'alive' };
-                    if (rolesToAssign[index].name === "Seer") seerPlayerName = playerName; // Update local seerPlayerName
+                logToModerator("Requesting server to assign roles for game " + currentLoadedGameId, "System");
+                const assignmentResult = await fetchFromServer('/api/games/' + currentLoadedGameId + '/assign-roles', {
+                    method: 'POST' 
+                    // Server will use its current list of players for this game
                 });
-                gameRoles = newGameRoles; // Update client-side gameRoles
 
-                // Simulate server update and reload for now
-                // In a real scenario:
-                // const updateResult = await fetchFromServer(`/api/games/${currentLoadedGameId}/roles`, {
-                //    method: 'POST', headers: {'Content-Type': 'application/json'},
-                //    body: JSON.stringify({ players: playersInCurrentGame }) // Server would assign roles
-                // });
-                // if (updateResult) loadSpecificGame(currentLoadedGameId);
-
-                renderAssignedRolesList();
-                assignedRolesContainer.classList.remove('hidden');
-                gamePhaseSection.classList.remove('hidden');
-                manualRevealSection.classList.remove('hidden');
-                logToModerator("Roles assigned for game " + currentLoadedGameId, "System");
-                sendWebSocketMessage('moderator_message', { content: "Game '" + (localGameList.find(g=>g.gameId === currentLoadedGameId)?.gameName || currentLoadedGameId) + "' roles assigned." });
-                updateNightActionSelectors(); // Ensure night action UI updates
+                if (assignmentResult && assignmentResult.playersInGame) {
+                    logToModerator("Roles assigned by server.", "System");
+                    // Reload the game state to get the new roles and statuses
+                    await loadSpecificGame(currentLoadedGameId); 
+                    // UI update will happen in loadSpecificGame via updateUIAfterGameLoad
+                    sendWebSocketMessage('moderator_message', { content: "Game '" + (localGameList.find(g=>g.gameId === currentLoadedGameId)?.gameName || currentLoadedGameId) + "' roles assigned by server." });
+                } else {
+                    logToModerator("Failed to assign roles on server.", "Error");
+                }
             });
 
             function renderAssignedRolesList() {
                 assignedRolesList.innerHTML = '';
-                playersInCurrentGame.forEach(playerName => { // Iterate based on players in game
+                if (Object.keys(gameRoles).length === 0 && playersInCurrentGame.length > 0) {
+                    assignedRolesList.innerHTML = '<li class="text-gray-400 italic">Roles not assigned yet for this game.</li>';
+                    assignedRolesContainer.classList.add('hidden'); // Hide if no roles
+                    return;
+                }
+                if (playersInCurrentGame.length === 0) {
+                     assignedRolesList.innerHTML = '<li class="text-gray-400 italic">No players in this game to show roles for.</li>';
+                     assignedRolesContainer.classList.add('hidden');
+                     return;
+                }
+                
+                assignedRolesContainer.classList.remove('hidden');
+
+                playersInCurrentGame.forEach(playerName => { 
                     const playerData = gameRoles[playerName];
-                    if (!playerData) { // Should not happen if playersInCurrentGame and gameRoles are in sync
-                        console.warn("No role data for player in current game:", playerName);
+                    if (!playerData || !playerData.roleName) { // Check if roleName exists
+                        const li = document.createElement('li');
+                        li.className = 'player-list-item text-yellow-400 italic';
+                        li.textContent = playerName + " (Role not yet assigned or loaded)";
+                        assignedRolesList.appendChild(li);
                         return;
                     }
 
                     const li = document.createElement('li');
                     li.className = 'player-list-item';
                     const nameSpan = document.createElement('span');
-                    nameSpan.textContent = playerName + " (" + playerData.name + ")";
+                    nameSpan.textContent = playerName + " (" + playerData.roleName + ")"; // Use roleName
                     nameSpan.className = playerData.status === 'eliminated' ? 'player-name-eliminated' : 'text-gray-200';
 
                     const buttonContainer = document.createElement('div');
@@ -532,7 +514,7 @@
                     showRoleBtn.textContent = 'Show Role';
                     showRoleBtn.className = 'bg-indigo-500 hover:bg-indigo-600 text-white text-xs font-semibold py-1 px-2 rounded-md transition';
                     showRoleBtn.onclick = () => sendWebSocketMessage('show_specific_role', { 
-                        payload: { playerName, roleName: playerData.name, roleDescription: playerData.description, team: playerData.team } 
+                        payload: { playerName, roleName: playerData.roleName, roleDescription: playerData.roleDetails.description, team: playerData.roleDetails.team } 
                     });
                     buttonContainer.appendChild(showRoleBtn);
 
@@ -542,12 +524,16 @@
                         eliminateBtn.className = 'bg-red-500 hover:bg-red-600 text-white text-xs font-semibold py-1 px-2 rounded-md transition';
                         eliminateBtn.onclick = async () => {
                             if (window.confirm("Manually eliminate " + playerName + "?")) {
-                                // TODO: API Call: POST /api/games/:gameId/player-status { playerName, status: 'eliminated' }
-                                gameRoles[playerName].status = 'eliminated'; // Optimistic update
-                                logToModerator(playerName + " manually eliminated.", "Elimination");
-                                sendWebSocketMessage('player_eliminated', { payload: { playerName: playerName, source: 'manual' } });
-                                renderAssignedRolesList(); 
-                                updateNightActionSelectors(); 
+                                const statusUpdate = await fetchFromServer('/api/games/' + currentLoadedGameId + '/player-status', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ playerName, status: 'eliminated' })
+                                });
+                                if (statusUpdate) {
+                                    logToModerator(playerName + " manually eliminated (server updated).", "Elimination");
+                                    sendWebSocketMessage('player_eliminated', { payload: { playerName: playerName, source: 'manual' } });
+                                    loadSpecificGame(currentLoadedGameId); // Refresh state
+                                }
                             }
                         };
                         buttonContainer.appendChild(eliminateBtn);
@@ -557,11 +543,15 @@
                         reviveBtn.className = 'bg-green-500 hover:bg-green-600 text-white text-xs font-semibold py-1 px-2 rounded-md transition';
                         reviveBtn.onclick = async () => {
                              if (window.confirm("Revive " + playerName + "?")) {
-                                // TODO: API Call: POST /api/games/:gameId/player-status { playerName, status: 'alive' }
-                                gameRoles[playerName].status = 'alive'; // Optimistic update
-                                logToModerator(playerName + " revived.", "Status Change");
-                                renderAssignedRolesList();
-                                updateNightActionSelectors();
+                                const statusUpdate = await fetchFromServer('/api/games/' + currentLoadedGameId + '/player-status', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ playerName, status: 'alive' })
+                                });
+                                if (statusUpdate) {
+                                    logToModerator(playerName + " revived (server updated).", "Status Change");
+                                    loadSpecificGame(currentLoadedGameId); // Refresh state
+                                }
                             }
                         };
                         buttonContainer.appendChild(reviveBtn);
@@ -572,69 +562,63 @@
                 });
             }
             
+            // TODO: Refactor startNightBtn, startDayBtn, seerCheckTargetBtn, werewolfTargetBtn
+            // to make API calls to server, then reload game state.
+
             startNightBtn.addEventListener('click', async () => {
                 if (!currentLoadedGameId) { logToModerator("No game loaded.", "Error"); return; }
-                // TODO: API Call: POST /api/games/:gameId/phase { phase: 'night' }
-                currentPhase = 'night'; // Optimistic update
-                werewolfNightTarget = null; 
-                logToModerator("Night phase started for game " + currentLoadedGameId, "Phase");
-                sendWebSocketMessage('game_phase_change', { payload: { phase: 'night', message: "Night has fallen. Everyone, close your eyes." } });
-                nightActionsSection.classList.remove('hidden');
-                updateNightActionSelectors();
+                // API Call: POST /api/games/:gameId/phase { phase: 'night' }
+                const phaseUpdate = await fetchFromServer('/api/games/' + currentLoadedGameId + '/phase', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phase: 'night' })
+                });
+                if (phaseUpdate) {
+                    logToModerator("Night phase started (server updated).", "Phase");
+                    sendWebSocketMessage('game_phase_change', { payload: { phase: 'night', message: "Night has fallen. Everyone, close your eyes." } });
+                    await loadSpecificGame(currentLoadedGameId); // Reload to get updated phase and reset night targets
+                }
             });
 
             startDayBtn.addEventListener('click', async () => {
                 if (!currentLoadedGameId) { logToModerator("No game loaded.", "Error"); return; }
-                // TODO: API Call: POST /api/games/:gameId/phase { phase: 'day', werewolfTarget: werewolfNightTarget }
-                // Server would handle elimination logic and respond, then client reloads game state.
-                currentPhase = 'day'; // Optimistic update
-                logToModerator("Day phase started for game " + currentLoadedGameId, "Phase");
-                
-                let dayBreakMessageText = "Daybreak! Open your eyes and discuss.";
-                let eliminatedPlayerNameForDisplay = null;
-                let specialDayInfo = null; 
+                // API Call: POST /api/games/:gameId/phase { phase: 'day' }
+                // Server will handle werewolf elimination based on its stored werewolfNightTarget
+                const phaseUpdate = await fetchFromServer('/api/games/' + currentLoadedGameId + '/phase', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phase: 'day' }) 
+                });
 
-                if (werewolfNightTarget && gameRoles[werewolfNightTarget]) {
-                    if (gameRoles[werewolfNightTarget].status === 'alive') {
-                        const eliminatedPlayer = werewolfNightTarget;
-                        gameRoles[eliminatedPlayer].status = 'eliminated'; // Optimistic
-                        eliminatedPlayerNameForDisplay = eliminatedPlayer;
-                        logToModerator(eliminatedPlayer + " was targeted by werewolves.", "Elimination");
-                    } else { 
-                        specialDayInfo = werewolfNightTarget + " was already eliminated. No new werewolf elimination.";
-                        logToModerator(specialDayInfo, "Info");
-                    }
-                } else if (currentPhase !== 'setup' && !werewolfNightTarget) { 
-                    specialDayInfo = "No one was eliminated by werewolves last night!";
-                    logToModerator(specialDayInfo, "Info");
+                if (phaseUpdate && phaseUpdate.eliminationResult) { // Server should respond with elimination details
+                    logToModerator("Day phase started (server updated).", "Phase");
+                    
+                    const daybreakPayload = {
+                        phase: 'day',
+                        message: "Daybreak! Open your eyes and discuss.",
+                        eliminatedPlayer: phaseUpdate.eliminationResult.eliminatedPlayerName, 
+                        specialInfo: phaseUpdate.eliminationResult.specialInfo 
+                    };
+                    sendWebSocketMessage('game_phase_change', { payload: daybreakPayload });
+                    await loadSpecificGame(currentLoadedGameId); // Reload to get updated statuses and phase
+                } else if (phaseUpdate) { // If no specific elimination result but phase changed
+                     logToModerator("Day phase started (server updated), no specific elimination data from server.", "Phase");
+                     sendWebSocketMessage('game_phase_change', { payload: { phase: 'day', message: "Daybreak! Open your eyes and discuss." } });
+                     await loadSpecificGame(currentLoadedGameId);
                 }
-                werewolfNightTarget = null; 
-
-                const daybreakPayload = {
-                    phase: 'day',
-                    message: dayBreakMessageText,
-                    eliminatedPlayer: eliminatedPlayerNameForDisplay, 
-                    specialInfo: specialDayInfo 
-                };
-                sendWebSocketMessage('game_phase_change', { payload: daybreakPayload });
-                
-                nightActionsSection.classList.add('hidden');
-                renderAssignedRolesList(); 
-                updateNightActionSelectors(); 
             });
-
+            
             function updateNightActionSelectors() {
-                if (!currentLoadedGameId || Object.keys(gameRoles).length === 0) {
+                if (!currentLoadedGameId || Object.keys(gameRoles).length === 0 || currentPhase !== 'night') {
                     seerActionContainer.classList.add('hidden');
                     werewolfActionContainer.classList.add('hidden');
                     return;
                 }
                 const alivePlayersForCurrentGame = playersInCurrentGame.filter(p => gameRoles[p] && gameRoles[p].status === 'alive');
                 
-                // Find current seer name based on gameRoles for the current game
-                const currentSeerNameInGame = playersInCurrentGame.find(pName => gameRoles[pName] && gameRoles[pName].name === "Seer" && gameRoles[pName].status === 'alive');
+                const currentSeerNameInGame = playersInCurrentGame.find(pName => gameRoles[pName] && gameRoles[pName].roleName === "Seer" && gameRoles[pName].status === 'alive');
 
-                if (currentPhase === 'night' && currentSeerNameInGame) {
+                if (currentSeerNameInGame) {
                     seerActionContainer.classList.remove('hidden');
                     seerTargetSelect.innerHTML = ''; 
                     const seerTargets = alivePlayersForCurrentGame.filter(p => p !== currentSeerNameInGame);
@@ -650,11 +634,11 @@
                     seerActionContainer.classList.add('hidden');
                 }
 
-                const aliveWerewolvesCount = alivePlayersForCurrentGame.filter(p => gameRoles[p] && gameRoles[p].name === "Werewolf").length;
-                if (currentPhase === 'night' && aliveWerewolvesCount > 0) {
+                const aliveWerewolvesCount = alivePlayersForCurrentGame.filter(p => gameRoles[p] && gameRoles[p].roleName === "Werewolf").length;
+                if (aliveWerewolvesCount > 0) {
                     werewolfActionContainer.classList.remove('hidden');
                     werewolfTargetSelect.innerHTML = '';
-                    const werewolfTargets = alivePlayersForCurrentGame.filter(p => gameRoles[p] && gameRoles[p].name !== "Werewolf"); 
+                    const werewolfTargets = alivePlayersForCurrentGame.filter(p => gameRoles[p] && gameRoles[p].roleName !== "Werewolf"); 
                      if (werewolfTargets.length > 0) {
                         werewolfTargets.forEach(pName => {
                             const option = document.createElement('option'); option.value = pName; option.textContent = pName; werewolfTargetSelect.appendChild(option);
@@ -668,29 +652,47 @@
                 }
             }
             
-            seerCheckTargetBtn.addEventListener('click', () => {
+            seerCheckTargetBtn.addEventListener('click', async () => {
                 if (!currentLoadedGameId) return;
                 const targetPlayerName = seerTargetSelect.value;
                 if (!targetPlayerName) { logToModerator("No target for Seer.", "Warning"); return; }
-                const targetRole = gameRoles[targetPlayerName];
-                if (targetRole) {
-                    const alignmentMessage = targetRole.name === "Werewolf" ? "Is a Werewolf" : "Not a Werewolf";
-                    logToModerator("Seer checks " + targetPlayerName + ". Result: " + alignmentMessage, "Seer");
-                    sendWebSocketMessage('seer_check_result', { payload: { targetPlayerName, alignmentMessage } });
+
+                // API Call: POST /api/games/:gameId/action { actionType: 'seerCheck', targetPlayerName }
+                const seerResult = await fetchFromServer('/api/games/' + currentLoadedGameId + '/action', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ actionType: 'seerCheck', targetPlayerName })
+                });
+
+                if (seerResult && seerResult.alignmentMessage) {
+                    logToModerator("Seer checks " + targetPlayerName + ". Server Result: " + seerResult.alignmentMessage, "Seer");
+                    sendWebSocketMessage('seer_check_result', { payload: { targetPlayerName, alignmentMessage: seerResult.alignmentMessage } });
+                } else {
+                    logToModerator("Failed to get Seer result from server for " + targetPlayerName, "Error");
                 }
             });
 
-            werewolfTargetBtn.addEventListener('click', () => {
+            werewolfTargetBtn.addEventListener('click', async () => {
                 if (!currentLoadedGameId) return;
                 const targetPlayerName = werewolfTargetSelect.value;
                 if (!targetPlayerName) { logToModerator("No target by werewolves.", "Warning"); return; }
-                werewolfNightTarget = targetPlayerName; // Store locally for now
-                // TODO: API Call: POST /api/games/:gameId/action { actionType: 'werewolfTarget', target: targetPlayerName }
-                logToModerator("Werewolves targeted: " + targetPlayerName, "Werewolf Action");
-                sendWebSocketMessage('moderator_message', { content: "The werewolves have chosen..." });
+                
+                // API Call: POST /api/games/:gameId/action { actionType: 'werewolfTarget', targetPlayerName }
+                const targetResult = await fetchFromServer('/api/games/' + currentLoadedGameId + '/action', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ actionType: 'werewolfTarget', targetPlayerName })
+                });
+
+                if (targetResult) { // Server confirms target recorded
+                    logToModerator("Werewolves targeted: " + targetPlayerName + " (server updated).", "Werewolf Action");
+                    sendWebSocketMessage('moderator_message', { content: "The werewolves have chosen their target..." });
+                    // Optionally, update local state or UI to indicate target chosen, or rely on next game state load
+                } else {
+                     logToModerator("Failed to record werewolf target on server for " + targetPlayerName, "Error");
+                }
             });
             
-            // Manual Reveals (no change needed here for game state logic yet)
             manualShowIsWerewolfBtn.addEventListener('click', () => sendWebSocketMessage('manual_reveal', { payload: { alignment: "Is a Werewolf" } }));
             manualShowNotWerewolfBtn.addEventListener('click', () => sendWebSocketMessage('manual_reveal', { payload: { alignment: "Not a Werewolf" } }));
             manualShowVillageTeamBtn.addEventListener('click', () => sendWebSocketMessage('manual_reveal', { payload: { alignment: "Village Alignment" } }));
