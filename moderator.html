@@ -276,16 +276,28 @@
                         eliminateBtn.textContent = 'Eliminate';
                         eliminateBtn.className = 'bg-red-500 hover:bg-red-600 text-white text-xs font-semibold py-1 px-2 rounded-md transition';
                         eliminateBtn.onclick = () => {
-                            // Using a simpler confirm for now, can be replaced with custom modal
                             if (window.confirm("Are you sure you want to manually eliminate " + playerName + "?")) {
                                 gameRoles[playerName].status = 'eliminated';
                                 logToModerator(playerName + " manually marked as eliminated.", "Elimination");
                                 sendWebSocketMessage('player_eliminated', { payload: { playerName: playerName, source: 'manual' } });
-                                renderAssignedRolesList(); // Re-render to show status change
-                                updateNightActionSelectors(); // Update dropdowns
+                                renderAssignedRolesList(); 
+                                updateNightActionSelectors(); 
                             }
                         };
                         buttonContainer.appendChild(eliminateBtn);
+                    } else { // Player is eliminated, show Revive button
+                        const reviveBtn = document.createElement('button');
+                        reviveBtn.textContent = 'Revive';
+                        reviveBtn.className = 'bg-green-500 hover:bg-green-600 text-white text-xs font-semibold py-1 px-2 rounded-md transition';
+                        reviveBtn.onclick = () => {
+                             if (window.confirm("Are you sure you want to revive " + playerName + "?")) {
+                                gameRoles[playerName].status = 'alive';
+                                logToModerator(playerName + " has been revived.", "Status Change");
+                                renderAssignedRolesList();
+                                updateNightActionSelectors();
+                            }
+                        };
+                        buttonContainer.appendChild(reviveBtn);
                     }
                     
                     li.appendChild(nameSpan);
@@ -321,7 +333,7 @@
                         specialDayInfo = werewolfNightTarget + " was already eliminated. No new werewolf elimination this night.";
                         logToModerator(specialDayInfo, "Info");
                     }
-                } else { 
+                } else if (currentPhase !== 'setup' && !werewolfNightTarget) { // Check if it's not the first day and no target was set
                     specialDayInfo = "No one was eliminated by werewolves last night!";
                     logToModerator(specialDayInfo, "Info");
                 }
@@ -331,8 +343,8 @@
                 const daybreakPayload = {
                     phase: 'day',
                     message: dayBreakMessageText,
-                    eliminatedPlayer: eliminatedPlayerNameForDisplay, // Will be null if no new elimination
-                    specialInfo: specialDayInfo // Will be null if there was a new elimination
+                    eliminatedPlayer: eliminatedPlayerNameForDisplay, 
+                    specialInfo: specialDayInfo 
                 };
                 sendWebSocketMessage('game_phase_change', { payload: daybreakPayload });
                 
@@ -370,7 +382,7 @@
                 if (currentPhase === 'night' && aliveWerewolvesCount > 0) {
                     werewolfActionContainer.classList.remove('hidden');
                     werewolfTargetSelect.innerHTML = '';
-                    const werewolfTargets = alivePlayers.filter(p => gameRoles[p] && gameRoles[p].name !== "Werewolf"); // Target non-werewolves
+                    const werewolfTargets = alivePlayers.filter(p => gameRoles[p] && gameRoles[p].name !== "Werewolf"); 
                      if (werewolfTargets.length > 0) {
                         werewolfTargets.forEach(pName => {
                             const option = document.createElement('option');
