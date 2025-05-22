@@ -8,29 +8,26 @@
     <style>
         body { font-family: 'Inter', sans-serif; }
         #messageDisplay {
-            font-size: 2.5rem; 
-            min-height: 150px; /* Adjusted for more content */
+            font-size: 2.2rem; /* Slightly smaller base for more content */
+            min-height: 200px; 
             word-break: break-word; 
             display: flex;
-            flex-direction: column; /* Stack elements vertically */
+            flex-direction: column; 
             justify-content: center;
             align-items: center;
+            text-align: center;
         }
-        .message-enter {
-            opacity: 0;
-            transform: translateY(20px);
-            animation: fadeIn 0.5s forwards;
-        }
-        @keyframes fadeIn {
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-        .role-name { font-size: 3rem; font-weight: bold; margin-bottom: 0.5rem; }
-        .role-player { font-size: 1.8rem; margin-bottom: 0.5rem; color: #a7f3d0; /* Lighter teal for player name */ }
-        .role-description { font-size: 1.5rem; color: #cbd5e1; /* Lighter gray for description */ }
-        .role-team { font-size: 1.2rem; margin-top: 1rem; font-style: italic; }
+        .message-enter { opacity: 0; transform: translateY(20px); animation: fadeIn 0.5s forwards; }
+        @keyframes fadeIn { to { opacity: 1; transform: translateY(0); } }
+        
+        .phase-message { font-size: 2.8rem; font-weight: 600; margin-bottom: 1rem;}
+        .role-name { font-size: 3.5rem; font-weight: bold; margin-bottom: 0.5rem; }
+        .role-player { font-size: 2rem; margin-bottom: 0.5rem; color: #a7f3d0; }
+        .role-description { font-size: 1.6rem; color: #cbd5e1; margin-bottom: 0.5rem; }
+        .role-team { font-size: 1.4rem; margin-top: 1rem; font-style: italic; }
+        .seer-result-target { font-size: 2rem; color: #e0e7ff; margin-bottom: 0.5rem; }
+        .seer-result-alignment { font-size: 3rem; font-weight: bold; color: #fde047; }
+        .manual-reveal-text { font-size: 3.5rem; font-weight: bold; color: #fde047; }
     </style>
 </head>
 <body class="bg-gray-900 text-white min-h-screen flex flex-col items-center justify-center p-6">
@@ -57,91 +54,64 @@
                 const wsHost = window.location.host;
                 socket = new WebSocket(wsProtocol + '//' + wsHost);
 
-
-                socket.onopen = function(event) {
-                    console.log('Display connected to WebSocket server.');
+                socket.onopen = () => {
                     statusDiv.textContent = 'Connected to server.';
                     statusDiv.className = 'p-3 bg-green-700 text-green-100 rounded-lg text-sm';
                 };
 
                 socket.onmessage = function(event) {
-                    console.log('Message received:', event.data);
+                    console.log('Display received:', event.data);
                     messageDisplay.innerHTML = ''; // Clear previous content
                     try {
                         const messageData = JSON.parse(event.data);
-                        
-                        // CORRECTED: Check for 'show_specific_role'
-                        if (messageData.type === 'show_specific_role' && messageData.payload) {
-                            displayTitle.textContent = messageData.payload.playerName + "'s Role"; // Changed title
-                            const payload = messageData.payload;
-                            
-                            // Player name is now part of the title, or can be added if desired
-                            // const playerNameEl = document.createElement('div');
-                            // playerNameEl.className = 'role-player message-enter';
-                            // playerNameEl.textContent = payload.playerName;
+                        const payload = messageData.payload; // Common shorthand
 
-                            const roleNameEl = document.createElement('div');
-                            roleNameEl.className = 'role-name message-enter';
-                            roleNameEl.textContent = payload.roleName;
-                            
-                            const roleDescEl = document.createElement('div');
-                            roleDescEl.className = 'role-description message-enter';
-                            roleDescEl.textContent = payload.roleDescription;
-
-                            const roleTeamEl = document.createElement('div');
-                            roleTeamEl.className = 'role-team message-enter';
-                            roleTeamEl.textContent = 'Team: ' + payload.team;
-
-                            // messageDisplay.appendChild(playerNameEl); 
-                            messageDisplay.appendChild(roleNameEl);
-                            messageDisplay.appendChild(roleDescEl);
-                            messageDisplay.appendChild(roleTeamEl);
-
-                        // CORRECTED: Check for 'moderator_message' for general updates
+                        if (messageData.type === 'show_specific_role' && payload) {
+                            displayTitle.textContent = payload.playerName + "'s Role";
+                            messageDisplay.innerHTML = `
+                                <div class="role-name message-enter">${payload.roleName}</div>
+                                <div class="role-description message-enter">${payload.roleDescription}</div>
+                                <div class="role-team message-enter">Team: ${payload.team}</div>
+                            `;
                         } else if (messageData.type === 'moderator_message' && messageData.content) {
                             displayTitle.textContent = "Game Information";
-                            const contentEl = document.createElement('div');
-                            contentEl.className = 'message-enter';
-                            contentEl.textContent = messageData.content;
-                            messageDisplay.appendChild(contentEl);
+                            messageDisplay.innerHTML = `<div class="message-enter">${messageData.content}</div>`;
+                        } else if (messageData.type === 'game_phase_change' && payload) {
+                            displayTitle.textContent = payload.phase.charAt(0).toUpperCase() + payload.phase.slice(1) + " Phase";
+                            messageDisplay.innerHTML = `<div class="phase-message message-enter">${payload.message}</div>`;
+                        } else if (messageData.type === 'seer_check_result' && payload) {
+                            displayTitle.textContent = "Seer's Vision";
+                            messageDisplay.innerHTML = `
+                                <div class="seer-result-target message-enter">The Seer investigates ${payload.targetPlayerName}...</div>
+                                <div class="seer-result-alignment message-enter">${payload.alignmentMessage}</div>
+                            `;
+                        } else if (messageData.type === 'manual_reveal' && payload) {
+                            displayTitle.textContent = "Revelation!";
+                            messageDisplay.innerHTML = `<div class="manual-reveal-text message-enter">${payload.alignment}</div>`;
                         } else {
-                             // Fallback for other unexpected message structures
                             displayTitle.textContent = "Game Information";
-                            const plainTextEl = document.createElement('div');
-                            plainTextEl.className = 'message-enter';
-                            plainTextEl.textContent = "Received unformatted message: " + event.data.toString();
-                            messageDisplay.appendChild(plainTextEl);
+                            messageDisplay.innerHTML = '<div class="message-enter">Received unformatted message: ' + event.data.toString() + '</div>';
                         }
                     } catch (e) {
-                        // If it's not JSON or another error occurs during processing
                         console.error('Error processing message on display:', e);
                         displayTitle.textContent = "Game Information";
-                        const errorTextEl = document.createElement('div');
-                        errorTextEl.className = 'message-enter';
-                        errorTextEl.textContent = "Error displaying message. Raw: " + event.data.toString();
-                        messageDisplay.appendChild(errorTextEl);
+                        messageDisplay.innerHTML = '<div class="message-enter">Error displaying message. Raw: ' + event.data.toString() + '</div>';
                     }
                 };
 
-                socket.onclose = function(event) {
-                    console.log('Disconnected from WebSocket server.');
-                    console.log('WebSocket Close Details: Code=' + event.code + ', Reason="' + event.reason + '", WasClean=' + event.wasClean);
+                socket.onclose = (event) => {
                     statusDiv.textContent = 'Disconnected (Code: ' + event.code + '). Attempting to reconnect...';
                     statusDiv.className = 'p-3 bg-red-700 text-red-100 rounded-lg text-sm';
                     messageDisplay.textContent = 'Connection lost. Trying to reconnect...';
-                    setTimeout(connect, 3000); 
+                    setTimeout(connect, 3000);
                 };
-
-                socket.onerror = function(error) {
-                    console.error('WebSocket Error:', error);
-                    statusDiv.textContent = 'Connection error. Is the server running? Check browser console & server logs.';
+                socket.onerror = () => {
+                    statusDiv.textContent = 'Connection error. Is the server running?';
                     statusDiv.className = 'p-3 bg-red-700 text-red-100 rounded-lg text-sm';
                     messageDisplay.textContent = 'Error connecting to the game server.';
                 };
             }
-            
-            // Initial connection attempt
-            connect();
+            connect(); // Initial connection
         });
     </script>
 </body>

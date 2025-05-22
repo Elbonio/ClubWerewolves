@@ -10,6 +10,7 @@
         .message-log-container { max-height: 200px; overflow-y: auto; }
         .player-list-item { display: flex; justify-content: space-between; align-items: center; padding: 0.5rem; border-bottom: 1px solid #4A5568; }
         .player-list-item:last-child { border-bottom: none; }
+        .hidden { display: none; }
     </style>
 </head>
 <body class="bg-gray-900 text-white min-h-screen flex flex-col items-center justify-center p-4">
@@ -17,49 +18,71 @@
         <h1 class="text-3xl font-bold mb-8 text-center text-purple-400">Moderator Control Panel</h1>
 
         <div class="mb-8 p-6 bg-gray-700 rounded-lg">
-            <h2 class="text-2xl font-semibold mb-4 text-purple-300">Player Setup</h2>
+            <h2 class="text-2xl font-semibold mb-4 text-purple-300">1. Player Setup</h2>
             <div class="flex gap-4 mb-4">
                 <input type="text" id="playerNameInput" class="flex-grow p-3 bg-gray-600 border border-gray-500 rounded-lg text-white placeholder-gray-400 focus:ring-purple-500 focus:border-purple-500" placeholder="Enter player name...">
                 <button id="addPlayerBtn" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-6 rounded-lg shadow-md transition">Add Player</button>
             </div>
             <div id="playerListContainer" class="mb-4">
                 <h3 class="text-lg font-medium text-gray-300 mb-2">Current Players:</h3>
-                <ul id="playerList" class="bg-gray-600 rounded-lg p-3 min-h-[50px]">
-                    </ul>
+                <ul id="playerList" class="bg-gray-600 rounded-lg p-3 min-h-[50px]"></ul>
             </div>
         </div>
 
         <div class="mb-8 p-6 bg-gray-700 rounded-lg">
-            <h2 class="text-2xl font-semibold mb-4 text-purple-300">Role Assignment</h2>
-            <p class="text-gray-400 mb-1">Define roles for the game. For simplicity, available roles are fixed for now.</p>
-            <p class="text-gray-400 mb-4 text-sm">Available roles: Villager, Werewolf, Seer.</p>
-            <button id="assignRolesBtn" class="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-4 rounded-lg shadow-md transition mb-4">Assign Roles & Start Game</button>
+            <h2 class="text-2xl font-semibold mb-4 text-purple-300">2. Role Assignment</h2>
+            <p class="text-gray-400 mb-4 text-sm">Available roles: Villager, Werewolf, Seer. Roles are distributed to provide at least one Werewolf and one Seer if possible.</p>
+            <button id="assignRolesBtn" class="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-4 rounded-lg shadow-md transition mb-4">Assign Roles & Prepare Game</button>
             <div id="assignedRolesContainer" class="hidden">
                 <h3 class="text-lg font-medium text-gray-300 mb-2">Assigned Roles (Moderator View Only):</h3>
-                <ul id="assignedRolesList" class="bg-gray-600 rounded-lg p-3 min-h-[50px] space-y-2">
-                    </ul>
+                <ul id="assignedRolesList" class="bg-gray-600 rounded-lg p-3 min-h-[50px] space-y-2"></ul>
             </div>
         </div>
         
+        <div id="gamePhaseSection" class="hidden mb-8 p-6 bg-gray-700 rounded-lg">
+            <h2 class="text-2xl font-semibold mb-4 text-purple-300">3. Game Phase Control</h2>
+            <div class="grid grid-cols-2 gap-4">
+                <button id="startNightBtn" class="bg-slate-600 hover:bg-slate-700 text-white font-semibold py-3 px-4 rounded-lg shadow-md transition">Start Night</button>
+                <button id="startDayBtn" class="bg-amber-500 hover:bg-amber-600 text-white font-semibold py-3 px-4 rounded-lg shadow-md transition">Start Day</button>
+            </div>
+        </div>
+
+        <div id="nightActionsSection" class="hidden mb-8 p-6 bg-gray-700 rounded-lg">
+            <h2 class="text-2xl font-semibold mb-4 text-purple-300">Night Actions</h2>
+            <div id="seerActionContainer" class="hidden">
+                <h3 class="text-xl font-medium text-gray-300 mb-2">Seer Action:</h3>
+                <div class="flex gap-4 items-center">
+                    <select id="seerTargetSelect" class="flex-grow p-3 bg-gray-600 border border-gray-500 rounded-lg text-white focus:ring-purple-500 focus:border-purple-500"></select>
+                    <button id="seerCheckTargetBtn" class="bg-teal-600 hover:bg-teal-700 text-white font-semibold py-3 px-4 rounded-lg shadow-md transition">Check Target & Show Result</button>
+                </div>
+            </div>
+            </div>
+        
+        <div id="manualRevealSection" class="hidden mb-6 p-6 bg-gray-700 rounded-lg">
+            <h2 class="text-2xl font-semibold mb-4 text-purple-300">Manual Reveals for Display</h2>
+            <div class="grid grid-cols-2 gap-4">
+                <button id="manualShowIsWerewolfBtn" class="bg-red-600 hover:bg-red-700 text-white font-semibold py-2 px-3 rounded-lg">Show "Is a Werewolf"</button>
+                <button id="manualShowNotWerewolfBtn" class="bg-sky-600 hover:bg-sky-700 text-white font-semibold py-2 px-3 rounded-lg">Show "Not a Werewolf"</button>
+                <button id="manualShowVillageTeamBtn" class="bg-lime-600 hover:bg-lime-700 text-white font-semibold py-2 px-3 rounded-lg">Show "Village Alignment"</button>
+                <button id="manualShowWerewolfTeamBtn" class="bg-rose-600 hover:bg-rose-700 text-white font-semibold py-2 px-3 rounded-lg">Show "Werewolf Alignment"</button>
+            </div>
+        </div>
+
         <div class="mb-6 p-6 bg-gray-700 rounded-lg">
             <h2 class="text-2xl font-semibold mb-4 text-purple-300">General Message</h2>
-            <label for="messageInput" class="block text-sm font-medium text-gray-300 mb-1">Message to Display:</label>
             <input type="text" id="messageInput" class="w-full p-3 bg-gray-600 border border-gray-500 rounded-lg text-white placeholder-gray-400 focus:ring-purple-500 focus:border-purple-500" placeholder="Enter general message for public display...">
             <button id="sendMessageBtn" class="mt-4 w-full bg-purple-600 hover:bg-purple-700 text-white font-semibold py-3 px-4 rounded-lg shadow-md transition">
                 Send General Message
             </button>
         </div>
 
-
         <div class="mt-8 p-6 bg-gray-700 rounded-lg">
             <h2 class="text-xl font-semibold mb-2 text-purple-300">Connection Status:</h2>
             <div id="status" class="p-3 bg-gray-600 rounded-lg text-sm">Connecting to server...</div>
         </div>
-        
         <div class="mt-6">
-            <h3 class="text-lg font-semibold mb-2 text-purple-300">Sent Messages Log:</h3>
-            <div id="sentMessagesLog" class="message-log-container p-3 bg-gray-600 rounded-lg text-sm space-y-1">
-            </div>
+            <h3 class="text-lg font-semibold mb-2 text-purple-300">Moderator Log:</h3>
+            <div id="moderatorLog" class="message-log-container p-3 bg-gray-600 rounded-lg text-sm space-y-1"></div>
         </div>
     </div>
 
@@ -69,88 +92,90 @@
             const messageInput = document.getElementById('messageInput');
             const sendMessageBtn = document.getElementById('sendMessageBtn');
             const statusDiv = document.getElementById('status');
-            const sentMessagesLog = document.getElementById('sentMessagesLog');
+            const moderatorLog = document.getElementById('moderatorLog'); // Changed from sentMessagesLog
             let socket;
 
-            // Player and Role Management elements
+            // Game elements
             const playerNameInput = document.getElementById('playerNameInput');
             const addPlayerBtn = document.getElementById('addPlayerBtn');
             const playerList = document.getElementById('playerList');
             const assignRolesBtn = document.getElementById('assignRolesBtn');
             const assignedRolesContainer = document.getElementById('assignedRolesContainer');
             const assignedRolesList = document.getElementById('assignedRolesList');
+            
+            const gamePhaseSection = document.getElementById('gamePhaseSection');
+            const startNightBtn = document.getElementById('startNightBtn');
+            const startDayBtn = document.getElementById('startDayBtn');
+            const nightActionsSection = document.getElementById('nightActionsSection');
+            const seerActionContainer = document.getElementById('seerActionContainer');
+            const seerTargetSelect = document.getElementById('seerTargetSelect');
+            const seerCheckTargetBtn = document.getElementById('seerCheckTargetBtn');
+
+            const manualRevealSection = document.getElementById('manualRevealSection');
+            const manualShowIsWerewolfBtn = document.getElementById('manualShowIsWerewolfBtn');
+            const manualShowNotWerewolfBtn = document.getElementById('manualShowNotWerewolfBtn');
+            const manualShowVillageTeamBtn = document.getElementById('manualShowVillageTeamBtn');
+            const manualShowWerewolfTeamBtn = document.getElementById('manualShowWerewolfTeamBtn');
 
             let players = [];
-            let gameRoles = {}; // To store { playerName: roleObject }
+            let gameRoles = {}; // { playerName: roleObject }
+            let currentPhase = 'setup'; // 'setup', 'night', 'day'
+            let seerPlayerName = null;
 
-            // Predefined roles (can be expanded)
             const ALL_ROLES = {
-                VILLAGER: { name: "Villager", description: "Find and eliminate the werewolves.", team: "Good" },
-                WEREWOLF: { name: "Werewolf", description: "Eliminate the villagers to win.", team: "Evil" },
-                SEER: { name: "Seer", description: "Each night, you may learn the true role of one player.", team: "Good" }
+                VILLAGER: { name: "Villager", description: "Find and eliminate the werewolves.", team: "Good", alignment: "Village" },
+                WEREWOLF: { name: "Werewolf", description: "Eliminate the villagers to win.", team: "Evil", alignment: "Werewolf" },
+                SEER: { name: "Seer", description: "Each night, you may learn the alignment of one player.", team: "Good", alignment: "Village" }
             };
 
             function connect() {
                 const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-                const wsHost = window.location.host; // For Render, this will be your app's host
-                // If running locally and server.js is on a different port than the HTML serving, adjust wsHost.
-                // For this setup, server.js serves HTML, so host is the same.
+                const wsHost = window.location.host;
                 socket = new WebSocket(wsProtocol + '//' + wsHost);
 
-
-                socket.onopen = function(event) {
-                    console.log('Moderator connected to WebSocket server.');
+                socket.onopen = () => {
                     statusDiv.textContent = 'Connected to server.';
                     statusDiv.className = 'p-3 bg-green-700 text-green-100 rounded-lg text-sm';
                 };
-
-                socket.onmessage = function(event) {
-                    console.log('Message from server:', event.data);
-                };
-
-                socket.onclose = function(event) {
-                    console.log('Disconnected from WebSocket server.');
-                    console.log('WebSocket Close Details: Code=' + event.code + ', Reason="' + event.reason + '", WasClean=' + event.wasClean);
+                socket.onmessage = (event) => console.log('Moderator received:', event.data); // Moderator usually doesn't receive game updates
+                socket.onclose = (event) => {
                     statusDiv.textContent = 'Disconnected (Code: ' + event.code + '). Attempting to reconnect...';
                     statusDiv.className = 'p-3 bg-red-700 text-red-100 rounded-lg text-sm';
-                    setTimeout(connect, 3000); 
+                    setTimeout(connect, 3000);
                 };
-
-                socket.onerror = function(error) {
-                    console.error('WebSocket Error:', error);
-                    statusDiv.textContent = 'Connection error. Is the server running? Check browser console & server logs.';
+                socket.onerror = () => {
+                    statusDiv.textContent = 'Connection error. Is the server running?';
                     statusDiv.className = 'p-3 bg-red-700 text-red-100 rounded-lg text-sm';
                 };
             }
 
-            // Function to add to local message log
-            function logSentMessage(message, type = "General") {
+            function logToModerator(message, type = "Info") {
                  const logEntry = document.createElement('div');
-                 logEntry.textContent = type + ': ' + message;
+                 logEntry.textContent = '[' + type + '] ' + message;
                  logEntry.className = 'text-gray-300';
-                 sentMessagesLog.insertBefore(logEntry, sentMessagesLog.firstChild); 
-                 if (sentMessagesLog.children.length > 10) { 
-                     sentMessagesLog.removeChild(sentMessagesLog.lastChild);
+                 moderatorLog.insertBefore(logEntry, moderatorLog.firstChild); 
+                 if (moderatorLog.children.length > 15) { 
+                     moderatorLog.removeChild(moderatorLog.lastChild);
                  }
             }
-
-            // Send general message
-            sendMessageBtn.addEventListener('click', () => {
-                const message = messageInput.value.trim();
-                if (message && socket && socket.readyState === WebSocket.OPEN) {
-                    const messageObject = { type: 'moderator_message', content: message };
-                    socket.send(JSON.stringify(messageObject));
-                    logSentMessage(message, "General");
-                    messageInput.value = ''; 
-                } else if (!socket || socket.readyState !== WebSocket.OPEN) {
+            
+            function sendWebSocketMessage(type, payload) {
+                if (socket && socket.readyState === WebSocket.OPEN) {
+                    socket.send(JSON.stringify({ type, ...payload }));
+                    logToModerator(payload.content || type + (payload.payload ? (': ' + (payload.payload.playerName || payload.payload.targetPlayer || payload.payload.alignment)) : ''), 'Sent');
+                } else {
                     statusDiv.textContent = 'Not connected. Cannot send message.';
                     statusDiv.className = 'p-3 bg-yellow-600 text-yellow-100 rounded-lg text-sm';
                 }
+            }
+
+            sendMessageBtn.addEventListener('click', () => {
+                const message = messageInput.value.trim();
+                if (message) sendWebSocketMessage('moderator_message', { content: message });
+                messageInput.value = ''; 
             });
-             messageInput.addEventListener('keypress', (event) => event.key === 'Enter' && sendMessageBtn.click());
+            messageInput.addEventListener('keypress', (e) => e.key === 'Enter' && sendMessageBtn.click());
 
-
-            // Player Management Logic
             addPlayerBtn.addEventListener('click', () => {
                 const playerName = playerNameInput.value.trim();
                 if (playerName && !players.includes(playerName)) {
@@ -158,38 +183,28 @@
                     renderPlayerList();
                     playerNameInput.value = '';
                 } else if (players.includes(playerName)) {
-                    alert("Player already added."); // Replace with a nicer modal later
+                    logToModerator("Player " + playerName + " already added.", "Warning");
                 }
             });
-            playerNameInput.addEventListener('keypress', (event) => event.key === 'Enter' && addPlayerBtn.click());
-
+            playerNameInput.addEventListener('keypress', (e) => e.key === 'Enter' && addPlayerBtn.click());
 
             function renderPlayerList() {
-                playerList.innerHTML = '';
-                if (players.length === 0) {
-                    playerList.innerHTML = '<li class="text-gray-400 italic">No players added yet.</li>';
-                    return;
-                }
-                players.forEach(name => {
-                    const li = document.createElement('li');
-                    li.textContent = name;
-                    li.className = 'text-white';
-                    playerList.appendChild(li);
-                });
+                playerList.innerHTML = players.length > 0 ? players.map(name => '<li class="text-white">' + name + '</li>').join('') : '<li class="text-gray-400 italic">No players added yet.</li>';
             }
-            renderPlayerList(); // Initial render
+            renderPlayerList();
 
-            // Role Assignment Logic
             assignRolesBtn.addEventListener('click', () => {
-                if (players.length < 3) { // Example minimum players
-                    alert("Need at least 3 players to assign roles."); // Replace with modal
+                if (players.length < 1) { // Min 1 player to test, ideally 3+ for game
+                    logToModerator("Need at least 1 player to assign roles.", "Warning");
                     return;
                 }
-                // Simple role distribution: 1 Werewolf, 1 Seer, rest Villagers
-                // This needs to be more dynamic based on player count.
                 let rolesToAssign = [];
+                seerPlayerName = null;
+                // Simplified role distribution
                 if (players.length >= 1) rolesToAssign.push(ALL_ROLES.WEREWOLF);
                 if (players.length >= 2) rolesToAssign.push(ALL_ROLES.SEER);
+                
+                // Fill remaining with Villagers
                 while (rolesToAssign.length < players.length) {
                     rolesToAssign.push(ALL_ROLES.VILLAGER);
                 }
@@ -200,57 +215,90 @@
                     [rolesToAssign[i], rolesToAssign[j]] = [rolesToAssign[j], rolesToAssign[i]];
                 }
 
-                gameRoles = {}; // Reset
+                gameRoles = {};
                 players.forEach((playerName, index) => {
                     gameRoles[playerName] = rolesToAssign[index];
+                    if (rolesToAssign[index].name === "Seer") {
+                        seerPlayerName = playerName;
+                    }
                 });
 
                 renderAssignedRolesList();
                 assignedRolesContainer.classList.remove('hidden');
-                // Optionally send a message that game has started
-                if (socket && socket.readyState === WebSocket.OPEN) {
-                    socket.send(JSON.stringify({ type: 'moderator_message', content: "The game has started! Roles are assigned." }));
-                    logSentMessage("Roles assigned and game started.", "System");
-                }
+                gamePhaseSection.classList.remove('hidden');
+                manualRevealSection.classList.remove('hidden');
+                logToModerator("Roles assigned. Game ready to start phases.", "System");
+                sendWebSocketMessage('moderator_message', { content: "Game setup complete! Roles assigned." });
             });
 
             function renderAssignedRolesList() {
                 assignedRolesList.innerHTML = '';
-                for (const playerName in gameRoles) {
-                    const role = gameRoles[playerName];
+                Object.entries(gameRoles).forEach(([playerName, role]) => {
                     const li = document.createElement('li');
                     li.className = 'player-list-item';
-
                     const nameSpan = document.createElement('span');
-                    nameSpan.textContent = playerName + " (" + role.name + ")"; // Moderator sees role
+                    nameSpan.textContent = playerName + " (" + role.name + ")";
                     nameSpan.className = 'text-gray-200';
-
                     const showRoleBtn = document.createElement('button');
                     showRoleBtn.textContent = 'Show Role on Display';
                     showRoleBtn.className = 'bg-indigo-500 hover:bg-indigo-600 text-white text-sm font-semibold py-1 px-3 rounded-md transition';
-                    showRoleBtn.onclick = () => {
-                        if (socket && socket.readyState === WebSocket.OPEN) {
-                            const payload = {
-                                playerName: playerName,
-                                roleName: role.name,
-                                roleDescription: role.description,
-                                team: role.team
-                            };
-                            socket.send(JSON.stringify({ type: 'show_specific_role', payload: payload }));
-                            logSentMessage("Showing " + playerName + "'s role.", "Role Reveal");
-                        } else {
-                            statusDiv.textContent = 'Not connected. Cannot show role.';
-                            statusDiv.className = 'p-3 bg-yellow-600 text-yellow-100 rounded-lg text-sm';
-                        }
-                    };
+                    showRoleBtn.onclick = () => sendWebSocketMessage('show_specific_role', { payload: { ...role, playerName } });
                     li.appendChild(nameSpan);
                     li.appendChild(showRoleBtn);
                     assignedRolesList.appendChild(li);
+                });
+            }
+            
+            startNightBtn.addEventListener('click', () => {
+                currentPhase = 'night';
+                logToModerator("Night phase started.", "Phase");
+                sendWebSocketMessage('game_phase_change', { payload: { phase: 'night', message: "Night has fallen. Everyone, close your eyes." } });
+                nightActionsSection.classList.remove('hidden');
+                updateSeerActionUI();
+            });
+
+            startDayBtn.addEventListener('click', () => {
+                currentPhase = 'day';
+                logToModerator("Day phase started.", "Phase");
+                sendWebSocketMessage('game_phase_change', { payload: { phase: 'day', message: "Daybreak! Open your eyes and discuss." } });
+                nightActionsSection.classList.add('hidden');
+            });
+
+            function updateSeerActionUI() {
+                if (currentPhase === 'night' && seerPlayerName && gameRoles[seerPlayerName]) {
+                    seerActionContainer.classList.remove('hidden');
+                    seerTargetSelect.innerHTML = '';
+                    players.filter(p => p !== seerPlayerName).forEach(pName => {
+                        const option = document.createElement('option');
+                        option.value = pName;
+                        option.textContent = pName;
+                        seerTargetSelect.appendChild(option);
+                    });
+                } else {
+                    seerActionContainer.classList.add('hidden');
                 }
             }
 
-            // Initial connection
-            connect();
+            seerCheckTargetBtn.addEventListener('click', () => {
+                const targetPlayerName = seerTargetSelect.value;
+                if (!targetPlayerName) {
+                    logToModerator("No target selected for Seer.", "Warning");
+                    return;
+                }
+                const targetRole = gameRoles[targetPlayerName];
+                if (targetRole) {
+                    const alignmentMessage = targetRole.name === "Werewolf" ? "Is a Werewolf" : "Not a Werewolf";
+                    logToModerator("Seer checks " + targetPlayerName + ". Result: " + alignmentMessage, "Seer");
+                    sendWebSocketMessage('seer_check_result', { payload: { targetPlayerName, alignmentMessage } });
+                }
+            });
+            
+            manualShowIsWerewolfBtn.addEventListener('click', () => sendWebSocketMessage('manual_reveal', { payload: { alignment: "Is a Werewolf" } }));
+            manualShowNotWerewolfBtn.addEventListener('click', () => sendWebSocketMessage('manual_reveal', { payload: { alignment: "Not a Werewolf" } }));
+            manualShowVillageTeamBtn.addEventListener('click', () => sendWebSocketMessage('manual_reveal', { payload: { alignment: "Village Alignment" } }));
+            manualShowWerewolfTeamBtn.addEventListener('click', () => sendWebSocketMessage('manual_reveal', { payload: { alignment: "Werewolf Alignment" } }));
+
+            connect(); // Initial connection
         });
     </script>
 </body>
