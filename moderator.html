@@ -150,7 +150,7 @@
             <div id="moderatorLog" class="message-log-container p-3 bg-gray-600 rounded-lg text-sm space-y-1"></div>
         </div>
         <div class="mt-6 text-center text-xs text-gray-500">
-            Panel v0.8.1 / Server <span id="serverVersionDisplay">loading...</span>
+            Panel v0.8.2 / Server <span id="serverVersionDisplay">loading...</span>
         </div>
     </div>
 
@@ -281,12 +281,12 @@
             }
 
             function sendWebSocketMessage(type, payload) {
-                if (!currentLoadedGameId) {
+                if (!currentLoadedGameId && type !== 'system_message_unrelated_to_game') { // Allow some system messages if needed
                     logToModerator("Cannot send WS message: No game loaded.", "Error");
                     return;
                 }
                 if (socket && socket.readyState === WebSocket.OPEN) {
-                    const messageToSend = { type, gameId: currentLoadedGameId, ...payload };
+                    const messageToSend = { type, gameId: currentLoadedGameId, ...payload }; // Always include gameId
                     socket.send(JSON.stringify(messageToSend));
                     let logMessageContent = "Unknown action";
                     if (payload.content) logMessageContent = payload.content;
@@ -431,8 +431,8 @@
                      nightActionsSection.classList.add('hidden');
                      manualRevealSection.classList.add('hidden');
                      votingSection.classList.add('hidden');
-                     if(currentRoleAssignmentSection) currentRoleAssignmentSection.classList.remove('hidden'); // Keep visible
-                     if(assignRolesBtn) assignRolesBtn.disabled = true; // Disable assign roles if game over
+                     if(currentRoleAssignmentSection) currentRoleAssignmentSection.classList.remove('hidden'); 
+                     if(assignRolesBtn) assignRolesBtn.disabled = true; 
                      if (assignedRolesContainer) assignedRolesContainer.classList.remove('hidden'); 
                 }
 
