@@ -1,3 +1,4 @@
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -54,7 +55,7 @@
             <div id="status" class="p-3 bg-gray-700 rounded-lg text-sm">Connecting to server...</div>
         </div>
          <div class="mt-6 text-center text-xs text-gray-500">
-            Display v0.8.1
+            Display v0.8.2
         </div>
     </div>
 
@@ -89,15 +90,13 @@
                         return;
                     }
 
-                    if (gameHasEnded && messageData.type !== 'game_over' && messageData.type !== 'moderator_message' /* Allow general messages even if game ended */) {
-                        // If a new game starts, gameHasEnded will be reset by socket.onopen
-                        // We might want a more explicit "new_game_started" message from server to reset display.
+                    if (gameHasEnded && messageData.type !== 'game_over' && messageData.type !== 'moderator_message') {
                         console.log("DISPLAY.HTML: Game has ended, ignoring message type: " + messageData.type);
                         return; 
                     }
-                    // If a game_over message is received, ensure we process it even if gameHasEnded was already true (e.g. for refresh)
                     if (messageData.type === 'game_over') {
-                         gameHasEnded = true; // Make sure it's set
+                         gameHasEnded = true; 
+                         console.log("DISPLAY.HTML: Game over flag SET.");
                     }
 
 
@@ -120,7 +119,7 @@
                         let htmlContent = "";
                         
                         if (payload.phase === 'day') {
-                            if (payload.eliminatedPlayer) {
+                            if (payload.eliminatedPlayer) { // This is for werewolf elimination
                                 htmlContent += `
                                     <div class="elimination-message message-enter">Last night...</div>
                                     <div class="eliminated-player-name message-enter">${payload.eliminatedPlayer} was eliminated.</div>
@@ -141,7 +140,7 @@
                     } else if (messageData.type === 'manual_reveal' && payload) {
                         displayTitle.textContent = "Revelation!";
                         messageDisplay.innerHTML = `<div class="manual-reveal-text message-enter">${payload.alignment}</div>`;
-                    } else if (messageData.type === 'player_eliminated' && payload) { 
+                    } else if (messageData.type === 'player_eliminated' && payload) { // For manual or vote eliminations
                         displayTitle.textContent = "A Player is Out!";
                         let eliminationContext = payload.source === 'manual' ? "The Moderator has announced:" : (payload.source === 'vote' ? "After the vote:" : "An event occurred:");
                         messageDisplay.innerHTML = `
@@ -153,7 +152,6 @@
                         let votingHTML = '<div class="voting-title message-enter">Players on Trial:</div>';
                         let maxVotes = 0;
                         if (payload.votes && Object.keys(payload.votes).length > 0) {
-                            // Ensure all vote values are numbers before using Math.max
                             const voteValues = Object.values(payload.votes).map(v => Number(v)).filter(v => !isNaN(v));
                             if (voteValues.length > 0) {
                                 maxVotes = Math.max(...voteValues);
@@ -181,10 +179,10 @@
                         displayTitle.textContent = "GAME OVER!";
                         messageDisplay.innerHTML = `
                             <div class="game-over-message message-enter">GAME OVER!</div>
-                            <div class="winning-team-message message-enter">${payload.winningTeam} Wins!</div>
+                            <div class="winning-team-message message-enter">${payload.team} Wins!</div> 
                             <div class="message-enter mt-2 text-lg">${payload.reason || ''}</div>
                         `;
-                        gameHasEnded = true; 
+                        // gameHasEnded = true; // Already set above
                     }
                     else {
                         displayTitle.textContent = "Game Information";
