@@ -21,9 +21,9 @@
         @keyframes fadeIn { to { opacity: 1; transform: translateY(0); } }
         
         .phase-message { font-size: 2.8rem; font-weight: 600; margin-bottom: 1rem;}
-        .elimination-message { font-size: 3rem; font-weight: bold; color: #ef4444; margin-bottom: 0.5rem; }
-        .eliminated-player-name { font-size: 3.5rem; color: #f87171; }
-        .special-info-message { font-size: 2.5rem; color: #facc15; margin-bottom: 1rem; }
+        .elimination-message { font-size: 3rem; font-weight: bold; color: #ef4444; /* Red for elimination */ margin-bottom: 0.5rem; }
+        .eliminated-player-name { font-size: 3.5rem; color: #f87171; /* Lighter red */ }
+        .special-info-message { font-size: 2.5rem; color: #facc15; /* Yellow for special info */ margin-bottom: 1rem; }
         .game-over-message { font-size: 4rem; font-weight: bold; color: #fde047; }
         .winning-team-message { font-size: 3rem; color: #a7f3d0; margin-top: 0.5rem; }
 
@@ -54,6 +54,9 @@
             <h2 class="text-lg font-semibold mb-2 text-teal-300">Connection Status:</h2>
             <div id="status" class="p-3 bg-gray-700 rounded-lg text-sm">Connecting to server...</div>
         </div>
+         <div class="mt-6 text-center text-xs text-gray-500">
+            Version v0.8.0
+        </div>
     </div>
 
     <script>
@@ -62,6 +65,7 @@
             const statusDiv = document.getElementById('status');
             const displayTitle = document.getElementById('displayTitle');
             let socket;
+            let gameHasEnded = false; // Flag to make game over message sticky
 
             function connect() {
                 const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -71,98 +75,111 @@
                 socket.onopen = () => {
                     statusDiv.textContent = 'Connected to server.';
                     statusDiv.className = 'p-3 bg-green-700 text-green-100 rounded-lg text-sm';
+                    gameHasEnded = false; // Reset on new connection
                 };
 
                 socket.onmessage = function(event) {
-                    console.log('Display received:', event.data);
-                    messageDisplay.innerHTML = ''; 
+                    console.log('DISPLAY.HTML: Received message:', event.data);
+                    
+                    let messageData;
                     try {
-                        const messageData = JSON.parse(event.data);
-                        const payload = messageData.payload; 
-                        const content = messageData.content; // For general moderator_message
-
-                        if (messageData.type === 'show_specific_role' && payload) {
-                            displayTitle.textContent = payload.playerName + "'s Role";
-                            messageDisplay.innerHTML = `
-                                <div class="role-name message-enter">${payload.roleName}</div>
-                                <div class="role-description message-enter">${payload.roleDescription}</div>
-                                <div class="role-team message-enter">Team: ${payload.team}</div>
-                            `;
-                        } else if (messageData.type === 'moderator_message' && content) {
-                            displayTitle.textContent = "Game Information";
-                            messageDisplay.innerHTML = `<div class="message-enter">${content}</div>`;
-                        } else if (messageData.type === 'game_phase_change' && payload) {
-                            displayTitle.textContent = payload.phase.charAt(0).toUpperCase() + payload.phase.slice(1) + " Phase";
-                            let htmlContent = "";
-                            if (payload.phase === 'day') {
-                                if (payload.eliminatedPlayer) {
-                                    htmlContent += `
-                                        <div class="elimination-message message-enter">Last night...</div>
-                                        <div class="eliminated-player-name message-enter">${payload.eliminatedPlayer} was eliminated.</div>
-                                    `;
-                                } else if (payload.specialInfo) {
-                                    htmlContent += `<div class="special-info-message message-enter">${payload.specialInfo}</div>`;
-                                }
-                                if (htmlContent && payload.message) htmlContent += '<hr class="my-4 border-gray-600 w-1/2 mx-auto">';
-                            }
-                            htmlContent += `<div class="phase-message message-enter">${payload.message}</div>`;
-                            messageDisplay.innerHTML = htmlContent;
-                        } else if (messageData.type === 'seer_check_result' && payload) {
-                            displayTitle.textContent = "Seer's Vision";
-                            messageDisplay.innerHTML = `
-                                <div class="seer-result-target message-enter">The Seer investigates ${payload.targetPlayerName}...</div>
-                                <div class="seer-result-alignment message-enter">${payload.alignmentMessage}</div>
-                            `;
-                        } else if (messageData.type === 'manual_reveal' && payload) {
-                            displayTitle.textContent = "Revelation!";
-                            messageDisplay.innerHTML = `<div class="manual-reveal-text message-enter">${payload.alignment}</div>`;
-                        } else if (messageData.type === 'player_eliminated' && payload) { 
-                            displayTitle.textContent = "A Player is Out!";
-                            let eliminationContext = payload.source === 'manual' ? "The Moderator has announced:" : (payload.source === 'vote' ? "After the vote:" : "An event occurred:");
-                            messageDisplay.innerHTML = `
-                                <div class="elimination-message message-enter">${eliminationContext}</div>
-                                <div class="eliminated-player-name message-enter">${payload.playerName} was eliminated.</div>
-                            `;
-                        } else if (messageData.type === 'voting_update' && payload) {
-                            displayTitle.textContent = "Voting in Progress";
-                            let votingHTML = '<div class="voting-title message-enter">Players on Trial:</div>';
-                            let maxVotes = 0;
-                            if (payload.votes && Object.keys(payload.votes).length > 0) {
-                                maxVotes = Math.max(...Object.values(payload.votes));
-                            }
-
-                            (payload.playersOnTrial || []).forEach(playerName => {
-                                const votes = payload.votes[playerName] || 0;
-                                const barWidth = maxVotes > 0 ? (votes / maxVotes) * 100 : 0;
-                                votingHTML += `
-                                    <div class="vote-item-display message-enter ${votes > 0 && votes === maxVotes ? 'leading-vote-display' : ''}">
-                                        <span class="vote-player-name-display">${playerName}</span>
-                                        <div class="vote-bar-display-container">
-                                            <div class="vote-bar-display" style="width: ${Math.min(barWidth, 100)}%;">${votes}</div>
-                                        </div>
-                                    </div>
-                                `;
-                            });
-                            if ((payload.playersOnTrial || []).length === 0) {
-                                votingHTML += '<p class="text-gray-400 italic message-enter">No players currently on trial.</p>';
-                            }
-                            messageDisplay.innerHTML = votingHTML;
-                        } else if (messageData.type === 'game_over' && payload) {
-                            displayTitle.textContent = "GAME OVER!";
-                            messageDisplay.innerHTML = `
-                                <div class="game-over-message message-enter">GAME OVER!</div>
-                                <div class="winning-team-message message-enter">${payload.winningTeam} Wins!</div>
-                                <div class="message-enter mt-2 text-lg">${payload.reason || ''}</div>
-                            `;
-                        }
-                        else {
-                            displayTitle.textContent = "Game Information";
-                            messageDisplay.innerHTML = '<div class="message-enter">Received unformatted message: ' + event.data.toString() + '</div>';
-                        }
+                        messageData = JSON.parse(event.data);
                     } catch (e) {
-                        console.error('Error processing message on display:', e);
+                        console.error('Display: Error parsing JSON message:', e);
+                        messageDisplay.innerHTML = '<div class="message-enter">Error: Received invalid message format.</div>';
+                        return;
+                    }
+
+                    // If game has ended, only process 'game_over' or allow reset by new game load (handled by new connection)
+                    if (gameHasEnded && messageData.type !== 'game_over') {
+                        console.log("DISPLAY.HTML: Game has ended, ignoring message type: " + messageData.type);
+                        return; 
+                    }
+
+                    messageDisplay.innerHTML = ''; // Clear previous content
+                    const payload = messageData.payload; 
+                    const content = messageData.content; 
+
+                    if (messageData.type === 'show_specific_role' && payload) {
+                        displayTitle.textContent = payload.playerName + "'s Role";
+                        messageDisplay.innerHTML = `
+                            <div class="role-name message-enter">${payload.roleName}</div>
+                            <div class="role-description message-enter">${payload.roleDescription}</div>
+                            <div class="role-team message-enter">Team: ${payload.team}</div>
+                        `;
+                    } else if (messageData.type === 'moderator_message' && content) {
                         displayTitle.textContent = "Game Information";
-                        messageDisplay.innerHTML = '<div class="message-enter">Error displaying message. Raw: ' + event.data.toString() + '</div>';
+                        messageDisplay.innerHTML = `<div class="message-enter">${content}</div>`;
+                    } else if (messageData.type === 'game_phase_change' && payload) {
+                        displayTitle.textContent = payload.phase.charAt(0).toUpperCase() + payload.phase.slice(1) + " Phase";
+                        let htmlContent = "";
+                        
+                        if (payload.phase === 'day') {
+                            if (payload.eliminatedPlayer) {
+                                htmlContent += `
+                                    <div class="elimination-message message-enter">Last night...</div>
+                                    <div class="eliminated-player-name message-enter">${payload.eliminatedPlayer} was eliminated.</div>
+                                `;
+                            } else if (payload.specialInfo) {
+                                htmlContent += `<div class="special-info-message message-enter">${payload.specialInfo}</div>`;
+                            }
+                            if (htmlContent && payload.message) htmlContent += '<hr class="my-4 border-gray-600 w-1/2 mx-auto">';
+                        }
+                        htmlContent += `<div class="phase-message message-enter">${payload.message}</div>`;
+                        messageDisplay.innerHTML = htmlContent;
+                    } else if (messageData.type === 'seer_check_result' && payload) {
+                        displayTitle.textContent = "Seer's Vision";
+                        messageDisplay.innerHTML = `
+                            <div class="seer-result-target message-enter">The Seer investigates ${payload.targetPlayerName}...</div>
+                            <div class="seer-result-alignment message-enter">${payload.alignmentMessage}</div>
+                        `;
+                    } else if (messageData.type === 'manual_reveal' && payload) {
+                        displayTitle.textContent = "Revelation!";
+                        messageDisplay.innerHTML = `<div class="manual-reveal-text message-enter">${payload.alignment}</div>`;
+                    } else if (messageData.type === 'player_eliminated' && payload) { 
+                        displayTitle.textContent = "A Player is Out!";
+                        let eliminationContext = payload.source === 'manual' ? "The Moderator has announced:" : (payload.source === 'vote' ? "After the vote:" : "An event occurred:");
+                        messageDisplay.innerHTML = `
+                            <div class="elimination-message message-enter">${eliminationContext}</div>
+                            <div class="eliminated-player-name message-enter">${payload.playerName} was eliminated.</div>
+                        `;
+                    } else if (messageData.type === 'voting_update' && payload) {
+                        displayTitle.textContent = "Voting in Progress";
+                        let votingHTML = '<div class="voting-title message-enter">Players on Trial:</div>';
+                        let maxVotes = 0;
+                        if (payload.votes && Object.keys(payload.votes).length > 0) {
+                            maxVotes = Math.max(...Object.values(payload.votes));
+                        }
+
+                        (payload.playersOnTrial || []).forEach(playerName => {
+                            const votes = payload.votes[playerName] || 0;
+                            const barWidth = maxVotes > 0 ? (votes / maxVotes) * 100 : 0;
+                            votingHTML += `
+                                <div class="vote-item-display message-enter ${votes > 0 && votes === maxVotes ? 'leading-vote-display' : ''}">
+                                    <span class="vote-player-name-display">${playerName}</span>
+                                    <div class="vote-bar-display-container">
+                                        <div class="vote-bar-display" style="width: ${Math.min(barWidth, 100)}%;">${votes}</div>
+                                    </div>
+                                </div>
+                            `;
+                        });
+                        if ((payload.playersOnTrial || []).length === 0) {
+                            votingHTML += '<p class="text-gray-400 italic message-enter">No players currently on trial.</p>';
+                        }
+                        messageDisplay.innerHTML = votingHTML;
+                    } else if (messageData.type === 'game_over' && payload) {
+                        console.log("DISPLAY.HTML: Received game_over message. Payload:", payload);
+                        displayTitle.textContent = "GAME OVER!";
+                        messageDisplay.innerHTML = `
+                            <div class="game-over-message message-enter">GAME OVER!</div>
+                            <div class="winning-team-message message-enter">${payload.winningTeam} Wins!</div>
+                            <div class="message-enter mt-2 text-lg">${payload.reason || ''}</div>
+                        `;
+                        gameHasEnded = true; // Set the flag
+                    }
+                    else {
+                        displayTitle.textContent = "Game Information";
+                        messageDisplay.innerHTML = '<div class="message-enter">Received unformatted message: ' + event.data.toString() + '</div>';
                     }
                 };
 
