@@ -13,7 +13,7 @@ const express = require('express');
 const app = express(); 
 app.use(express.json()); 
 
-const SERVER_VERSION = "0.8.1"; // Define server version
+const SERVER_VERSION = "0.8.2"; // Updated server version
 
 // --- In-Memory Data Stores ---
 let masterPlayerList = []; // Array of player objects { id: string, name: string }
@@ -34,7 +34,6 @@ function getPlayerByName(playerName) {
 function broadcastToGameClients(gameId, messageObject) {
     clients.forEach(client => {
         if (client.readyState === WebSocket.OPEN) {
-            // Add gameId to the message if not present, for client-side filtering if needed
             const messageToSend = { ...messageObject, gameId: messageObject.gameId || gameId };
             client.send(JSON.stringify(messageToSend));
         }
@@ -46,6 +45,12 @@ function checkWinConditions(game) {
     if (!game || !game.playersInGame || Object.keys(game.playersInGame).length === 0 || !game.playerOrder) {
         console.log("Win check skipped for game " + game.gameId + ": No players or game not fully initialized.");
         return null; 
+    }
+    // Only proceed if roles have been assigned
+    const rolesAssigned = game.playerOrder.some(name => game.playersInGame[name] && game.playersInGame[name].roleDetails);
+    if (!rolesAssigned && game.currentPhase !== 'setup' && game.currentPhase !== 'roles_assigned') {
+        console.log("Win check skipped for game " + game.gameId + ": Roles not assigned yet.");
+        return null;
     }
     if (game.gameWinner && game.gameWinner.team) return game.gameWinner; 
 
@@ -62,14 +67,14 @@ function checkWinConditions(game) {
     const aliveWerewolves = alivePlayersWithRoles.filter(name => game.playersInGame[name].roleDetails.alignment === "Werewolf");
     const aliveNonWerewolves = alivePlayersWithRoles.filter(name => game.playersInGame[name].roleDetails.alignment !== "Werewolf");
 
-    if (aliveWerewolves.length === 0 && aliveNonWerewolves.length > 0) { 
+    if (aliveWerewolves.length === 0 && aliveNonWerewolves.length > 0 && rolesAssigned) { 
         game.gameWinner = { team: "Village", reason: "All werewolves have been eliminated." };
         game.currentPhase = 'finished';
         console.log("SERVER: Game " + game.gameId + " ended: Village wins. Broadcasting game_over.");
         broadcastToGameClients(game.gameId, {type: 'game_over', payload: game.gameWinner });
         return game.gameWinner;
     }
-    if (aliveWerewolves.length > 0 && aliveWerewolves.length >= aliveNonWerewolves.length) { 
+    if (aliveWerewolves.length > 0 && aliveWerewolves.length >= aliveNonWerewolves.length && rolesAssigned) { 
         game.gameWinner = { team: "Werewolves", reason: "Werewolves have overwhelmed the village." };
         game.currentPhase = 'finished';
         console.log("SERVER: Game " + game.gameId + " ended: Werewolves win. Broadcasting game_over.");
@@ -188,7 +193,7 @@ app.post('/api/games/:gameId/player-status', (req, res) => {
     game.playersInGame[playerName].status = status;
     console.log('Status for', playerName, 'in', game.gameId, 'to', status);
     
-    checkWinConditions(game); // This will set game.gameWinner and broadcast if game ends
+    checkWinConditions(game); 
     res.status(200).json(game); 
 });
 
@@ -230,7 +235,7 @@ app.post('/api/games/:gameId/phase', (req, res) => {
         game.playersOnTrial = []; game.votes = {}; 
     }
     
-    // game_over WS message is sent by checkWinConditions
+    // game_over WS message is sent by checkWinConditions if applicable
     res.status(200).json(game); 
 });
 
@@ -242,7 +247,9 @@ app.post('/api/games/:gameId/action', (req, res) => {
     if (game.currentPhase !== 'night') return res.status(400).json({ message: "Actions only at night." });
 
     if (actionType === 'seerCheck') {
-        if (!targetPlayerName || !game.playersInGame[targetPlayerName]) return res.status(400).json({ message: "Invalid Seer target." });
+        if (!targetPlayerName || !game.playersInGame[targetPlayerName] || !game.playersInGame[targetPlayerName].roleDetails) {
+             return res.status(400).json({ message: "Invalid Seer target or target has no role details." });
+        }
         const targetData = game.playersInGame[targetPlayerName];
         const alignmentMessage = targetData.roleDetails.alignment === "Werewolf" ? "Is a Werewolf" : "Not a Werewolf";
         console.log("Seer check on", targetPlayerName, "in", game.gameId, ":", alignmentMessage);
