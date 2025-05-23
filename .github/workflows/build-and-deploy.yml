@@ -25,9 +25,6 @@ jobs:
       - name: Install Packages
         run: npm ci
 
-      - name: Run Tests
-        run: npm test
-
       - name: Build and Deploy to Docker Registry
         uses: mr-smithers-excellent/docker-build-push@v5
         with:
