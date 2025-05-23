@@ -53,7 +53,7 @@ function checkWinConditions(game) {
 
     const alivePlayersWithRoles = game.playerOrder.filter(name => game.playersInGame[name] && game.playersInGame[name].status === 'alive' && game.playersInGame[name].roleDetails);
     
-    if (alivePlayersWithRoles.length === 0 && rolesAssigned && game.currentPhase !== 'setup' && game.currentPhase !== 'roles_assigned') {
+    if (alivePlayersWithRoles.length === 0 && rolesAssigned && game.currentPhase !== 'setup' && game.currentPhase !== 'roles_assigned') { 
          game.gameWinner = { team: "No One", reason: "All players eliminated." };
          game.currentPhase = 'finished';
          console.log("SERVER: Game " + game.gameId + " ended: All players eliminated. Broadcasting game_over.");
@@ -216,30 +216,33 @@ app.post('/api/games/:gameId/phase', (req, res) => {
         console.log("Game " + game.gameId + " phase changed to NIGHT");
     } else if (phase === 'day') {
         console.log("Game " + game.gameId + " phase changed to DAY from " + previousPhase);
-        // Only process werewolf elimination if coming from night
         if (previousPhase === 'night' && game.werewolfNightTarget && game.playersInGame[game.werewolfNightTarget]) {
             if (game.playersInGame[game.werewolfNightTarget].status === 'alive') {
                 game.playersInGame[game.werewolfNightTarget].status = 'eliminated';
                 eliminationResult.eliminatedPlayerName = game.werewolfNightTarget; 
                 game.gameLog.push(game.werewolfNightTarget + " was eliminated by werewolves.");
                 console.log(game.werewolfNightTarget + " eliminated by WW in " + game.gameId);
+                checkWinConditions(game); 
             } else {
                 eliminationResult.specialInfo = game.werewolfNightTarget + " was already eliminated.";
                  console.log(game.werewolfNightTarget + " was already targeted but is eliminated in game " + game.gameId);
             }
-        } else if (previousPhase === 'night') { // No werewolf target set or target invalid
+        } else if (previousPhase === 'night') { // No werewolf target set, or target was invalid.
             eliminationResult.specialInfo = "No one was eliminated by werewolves.";
             console.log("No werewolf elimination in game " + game.gameId + " (target: " + game.werewolfNightTarget + ")");
         }
-        // Always check win conditions when transitioning to day after potential eliminations
-        checkWinConditions(game); 
+        // Always check win conditions when transitioning to day, even if no WW kill (e.g., game ended by other means)
+        // This checkWinConditions call will broadcast 'game_over' if applicable.
+        if (!game.gameWinner) { // Only check if not already decided by WW kill this turn.
+             checkWinConditions(game);
+        }
         
         game.werewolfNightTarget = null; 
         game.playersOnTrial = []; game.votes = {}; 
     }
     
-    // The game_over WS message is sent by checkWinConditions if applicable.
-    // The API response includes the full game state.
+    // Pass eliminationResult in the game object itself for the client to use
+    game.eliminationResult = eliminationResult; // Add this to the game object for the response
     res.status(200).json(game); 
 });
 
