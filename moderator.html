@@ -149,6 +149,9 @@
             <h3 class="text-lg font-semibold mb-2 text-purple-300">Moderator Log:</h3>
             <div id="moderatorLog" class="message-log-container p-3 bg-gray-600 rounded-lg text-sm space-y-1"></div>
         </div>
+        <div class="mt-6 text-center text-xs text-gray-500">
+            Version v0.8.0
+        </div>
     </div>
 
     <script>
@@ -674,8 +677,7 @@
                 });
                 if (phaseUpdate) {
                     logToModerator("Night phase started (server updated).", "Phase");
-                    // Server response now includes gameWinner, so no separate WS message needed here if game ends
-                    if (!phaseUpdate.gameWinner || !phaseUpdate.gameWinner.team) { // Only send phase change if game not over
+                    if (!phaseUpdate.gameWinner || !phaseUpdate.gameWinner.team) { 
                         sendWebSocketMessage('game_phase_change', { payload: { phase: 'night', message: "Night has fallen. Everyone, close your eyes." } });
                     }
                     await loadSpecificGame(currentLoadedGameId); 
@@ -692,7 +694,6 @@
 
                 if (phaseUpdate) { 
                     logToModerator("Day phase processing complete (server updated).", "Phase");
-                     // Server response now includes gameWinner, so no separate WS message needed here if game ends
                     if (!phaseUpdate.gameWinner || !phaseUpdate.gameWinner.team) {
                         const daybreakPayload = {
                             phase: 'day',
@@ -960,12 +961,11 @@
 
                 if (result) {
                     logToModerator("Vote processed. Eliminated: " + (eliminatedPlayerName || "None"), "Voting");
-                    if (eliminatedPlayerName && (!result.gameWinner || !result.gameWinner.team) ) { // Only send player_eliminated if game not over
+                    if (eliminatedPlayerName && (!result.gameWinner || !result.gameWinner.team) ) { 
                         sendWebSocketMessage('player_eliminated', { payload: { gameId: currentLoadedGameId, playerName: eliminatedPlayerName, source: 'vote' } });
                     } else if (!eliminatedPlayerName && (!result.gameWinner || !result.gameWinner.team)) {
                         sendWebSocketMessage('moderator_message', { gameId: currentLoadedGameId, content: "No one was eliminated by vote. Discussion continues." });
                     }
-                    // Game over message is handled by server via WS if gameWinner is set in result
                     await loadSpecificGame(currentLoadedGameId); 
                 }
             });
