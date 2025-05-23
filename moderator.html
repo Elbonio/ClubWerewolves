@@ -19,6 +19,7 @@
         .vote-bar-container { flex-grow: 1; background-color: #4A5568; border-radius: 0.25rem; margin: 0 0.5rem; height: 20px; overflow: hidden;}
         .vote-bar { background-color: #60A5FA; height: 100%; text-align: right; padding-right: 5px; color: white; font-size: 0.8rem; white-space: nowrap; transition: width 0.3s ease-in-out;}
         .leading-vote { border: 2px solid #FBBF24; /* Amber border for leading vote */ }
+        button:disabled { background-color: #4A5568; cursor: not-allowed; }
     </style>
 </head>
 <body class="bg-gray-900 text-white min-h-screen flex flex-col items-center justify-center p-4">
@@ -235,8 +236,6 @@
                     } else if (data.type === 'game_over' && data.gameId === currentLoadedGameId) {
                         logToModerator('Game Over message received via WS. Payload: ' + JSON.stringify(data.payload), 'WS Received');
                         if (data.payload) {
-                            // The server is the source of truth for game_over, so when this message is received,
-                            // we should reload the game state to ensure the moderator panel also reflects 'finished'.
                             loadSpecificGame(currentLoadedGameId); 
                         }
                     } else {
@@ -363,7 +362,7 @@
                 const gameIsFinished = (gameWinnerData && gameWinnerData.team) || currentPhase === 'finished';
 
                 if (gameIsFinished) {
-                    gameOverMessage.textContent = "GAME OVER! " + (gameWinnerData?.team || "Unknown") + " wins! Reason: " + (gameWinnerData?.reason || "Win condition met.");
+                    gameOverMessage.textContent = "GAME OVER! " + (gameWinnerData?.team || "Team") + " wins! Reason: " + (gameWinnerData?.reason || "Win condition met.");
                     gameOverMessage.classList.remove('hidden');
                     currentGameSpecificsSection.classList.add('hidden'); 
                 } else {
@@ -403,7 +402,7 @@
                                 setupVoteContainer.classList.remove('hidden');
                                 activeVotingContainer.classList.add('hidden');
                             }
-                        } else { // e.g. 'setup', 'roles_assigned'
+                        } else { 
                             nightActionsSection.classList.add('hidden');
                             votingSection.classList.add('hidden');
                         }
@@ -415,6 +414,15 @@
                         votingSection.classList.add('hidden');
                     }
                     updateNightActionSelectors();
+                } else { 
+                     gamePhaseSection.classList.add('hidden');
+                     nightActionsSection.classList.add('hidden');
+                     manualRevealSection.classList.add('hidden');
+                     votingSection.classList.add('hidden');
+                     // Keep role assignment section visible for review, but disable assign button
+                     if(currentRoleAssignmentSection) currentRoleAssignmentSection.classList.remove('hidden');
+                     if(assignRolesBtn) assignRolesBtn.disabled = true;
+                     if (assignedRolesContainer) assignedRolesContainer.classList.remove('hidden'); 
                 }
 
 
@@ -620,7 +628,7 @@
                                 });
                                 if (statusUpdate) {
                                     logToModerator(playerName + " manually eliminated (server updated).", "Elimination");
-                                    sendWebSocketMessage('player_eliminated', { payload: { playerName: playerName, source: 'manual' } }); // Inform display
+                                    sendWebSocketMessage('player_eliminated', { payload: { playerName: playerName, source: 'manual' } }); 
                                     loadSpecificGame(currentLoadedGameId); 
                                 }
                             }
@@ -666,7 +674,10 @@
                 });
                 if (phaseUpdate) {
                     logToModerator("Night phase started (server updated).", "Phase");
-                    sendWebSocketMessage('game_phase_change', { payload: { phase: 'night', message: "Night has fallen. Everyone, close your eyes." } });
+                    // Server response now includes gameWinner, so no separate WS message needed here if game ends
+                    if (!phaseUpdate.gameWinner || !phaseUpdate.gameWinner.team) { // Only send phase change if game not over
+                        sendWebSocketMessage('game_phase_change', { payload: { phase: 'night', message: "Night has fallen. Everyone, close your eyes." } });
+                    }
                     await loadSpecificGame(currentLoadedGameId); 
                 }
             });
@@ -681,13 +692,16 @@
 
                 if (phaseUpdate) { 
                     logToModerator("Day phase processing complete (server updated).", "Phase");
-                    const daybreakPayload = {
-                        phase: 'day',
-                        message: "Daybreak! Open your eyes and discuss.",
-                        eliminatedPlayer: phaseUpdate.eliminationResult?.eliminatedPlayerName, 
-                        specialInfo: phaseUpdate.eliminationResult?.specialInfo 
-                    };
-                    sendWebSocketMessage('game_phase_change', { payload: daybreakPayload });
+                     // Server response now includes gameWinner, so no separate WS message needed here if game ends
+                    if (!phaseUpdate.gameWinner || !phaseUpdate.gameWinner.team) {
+                        const daybreakPayload = {
+                            phase: 'day',
+                            message: "Daybreak! Open your eyes and discuss.",
+                            eliminatedPlayer: phaseUpdate.eliminationResult?.eliminatedPlayerName, 
+                            specialInfo: phaseUpdate.eliminationResult?.specialInfo 
+                        };
+                        sendWebSocketMessage('game_phase_change', { payload: daybreakPayload });
+                    }
                     await loadSpecificGame(currentLoadedGameId); 
                 }
             });
@@ -823,8 +837,6 @@
                 });
                 if (result) {
                     logToModerator("Voting started for: " + selectedForTrial.join(', '), "Voting");
-                    // Server response (result) now contains the full game state including votes and playersOnTrial
-                    // Send this initial voting state to display
                     sendWebSocketMessage('voting_update', { payload: { gameId: currentLoadedGameId, playersOnTrial: result.playersOnTrial || [], votes: result.votes || {} } });
                     await loadSpecificGame(currentLoadedGameId); 
                 }
@@ -858,7 +870,7 @@
                     voteBarContainer.className = 'vote-bar-container w-1/3';
                     const voteBar = document.createElement('div');
                     voteBar.className = 'vote-bar';
-                    const barWidthPercentage = maxVotes > 0 ? (votes / maxVotes) * 100 : (totalPlayersOnTrial > 0 ? (votes / totalPlayersOnTrial) * 100 : 0) ; // Fallback if maxVotes is 0
+                    const barWidthPercentage = maxVotes > 0 ? (votes / maxVotes) * 100 : 0; 
                     voteBar.style.width = Math.min(barWidthPercentage, 100) + '%'; 
                     voteBar.textContent = votes;
                     voteBarContainer.appendChild(voteBar);
@@ -921,7 +933,7 @@
                     if (votes > maxVotes) {
                         maxVotes = votes;
                         playersWithMaxVotes = [player];
-                    } else if (votes === maxVotes && maxVotes > 0) { // Only add to tie if votes are > 0
+                    } else if (votes === maxVotes && maxVotes > 0) { 
                         playersWithMaxVotes.push(player);
                     }
                 });
@@ -948,11 +960,12 @@
 
                 if (result) {
                     logToModerator("Vote processed. Eliminated: " + (eliminatedPlayerName || "None"), "Voting");
-                    if (eliminatedPlayerName) {
+                    if (eliminatedPlayerName && (!result.gameWinner || !result.gameWinner.team) ) { // Only send player_eliminated if game not over
                         sendWebSocketMessage('player_eliminated', { payload: { gameId: currentLoadedGameId, playerName: eliminatedPlayerName, source: 'vote' } });
-                    } else {
+                    } else if (!eliminatedPlayerName && (!result.gameWinner || !result.gameWinner.team)) {
                         sendWebSocketMessage('moderator_message', { gameId: currentLoadedGameId, content: "No one was eliminated by vote. Discussion continues." });
                     }
+                    // Game over message is handled by server via WS if gameWinner is set in result
                     await loadSpecificGame(currentLoadedGameId); 
                 }
             });
