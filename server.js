@@ -29,11 +29,25 @@ function getPlayerByName(playerName) {
     return masterPlayerList.find(p => p.name.toLowerCase() === playerName.toLowerCase());
 }
 
+function broadcastToGameClients(gameId, messageObject) {
+    // In a more advanced setup, clients would subscribe to game-specific channels.
+    // For now, we broadcast to all, and client-side display.html filters by gameId if needed.
+    // However, our current display.html doesn't filter by gameId for WS messages, it assumes it's for the "active" game from moderator.
+    // This simple broadcast is fine for a single display screen.
+    clients.forEach(client => {
+        if (client.readyState === WebSocket.OPEN) {
+            client.send(JSON.stringify(messageObject));
+        }
+    });
+}
+
+
 function checkWinConditions(game) {
     if (!game || !game.playersInGame || Object.keys(game.playersInGame).length === 0 || !game.playerOrder) {
         console.log("Win check skipped for game " + game.gameId + ": No players or game not fully initialized.");
         return null; 
     }
+    if (game.gameWinner && game.gameWinner.team) return game.gameWinner; // Game already decided
 
     const alivePlayersWithRoles = game.playerOrder.filter(name => game.playersInGame[name] && game.playersInGame[name].status === 'alive' && game.playersInGame[name].roleDetails);
     
@@ -41,6 +55,7 @@ function checkWinConditions(game) {
          game.gameWinner = { team: "No One", reason: "All players eliminated." };
          game.currentPhase = 'finished';
          console.log("Game " + game.gameId + " ended: All players eliminated.");
+         broadcastToGameClients(game.gameId, {type: 'game_over', gameId: game.gameId, payload: game.gameWinner });
          return game.gameWinner;
     }
     
@@ -51,12 +66,14 @@ function checkWinConditions(game) {
         game.gameWinner = { team: "Village", reason: "All werewolves have been eliminated." };
         game.currentPhase = 'finished';
         console.log("Game " + game.gameId + " ended: Village wins.");
+        broadcastToGameClients(game.gameId, {type: 'game_over', gameId: game.gameId, payload: game.gameWinner });
         return game.gameWinner;
     }
     if (aliveWerewolves.length > 0 && aliveWerewolves.length >= aliveNonWerewolves.length) { 
         game.gameWinner = { team: "Werewolves", reason: "Werewolves have overwhelmed the village." };
         game.currentPhase = 'finished';
         console.log("Game " + game.gameId + " ended: Werewolves win.");
+        broadcastToGameClients(game.gameId, {type: 'game_over', gameId: game.gameId, payload: game.gameWinner });
         return game.gameWinner;
     }
     return null; // No winner yet
@@ -116,6 +133,10 @@ app.post('/api/games/:gameId/players', (req, res) => {
     const game = games[req.params.gameId];
     const { players: playerNamesFromClient } = req.body;
     if (!game) return res.status(404).json({ message: 'Game not found.' });
+    if (game.currentPhase !== 'setup' && game.currentPhase !== 'roles_assigned' && Object.keys(game.playersInGame).length > 0 && game.playerOrder.length > 0) {
+        // If game has started (roles assigned and players exist), don't allow easy modification of player list this way
+        // return res.status(400).json({ message: 'Cannot modify player list after game has effectively started with roles. Reset game or manage status.' });
+    }
     if (!Array.isArray(playerNamesFromClient)) return res.status(400).json({ message: 'Invalid player list.' });
 
     const newPlayersInGame = {}; const newPlayerOrder = [];
@@ -136,6 +157,7 @@ app.post('/api/games/:gameId/players', (req, res) => {
 app.post('/api/games/:gameId/assign-roles', (req, res) => {
     const game = games[req.params.gameId];
     if (!game || !game.playerOrder || game.playerOrder.length === 0) return res.status(400).json({ message: 'No players.' });
+    if (game.gameWinner) return res.status(400).json({ message: 'Game already finished.' });
 
     let rolesToAssign = []; game.seerPlayerName = null;
     const numPlayers = game.playerOrder.length;
@@ -160,21 +182,14 @@ app.post('/api/games/:gameId/player-status', (req, res) => {
     const game = games[req.params.gameId];
     const { playerName, status } = req.body;
     if (!game || !game.playersInGame[playerName]) return res.status(404).json({ message: 'Game or player not found.' });
+    if (game.gameWinner) return res.status(400).json({ message: 'Game already finished.' });
     if (status !== 'alive' && status !== 'eliminated') return res.status(400).json({ message: 'Invalid status.' });
     
     game.playersInGame[playerName].status = status;
     console.log('Status for', playerName, 'in', game.gameId, 'to', status);
     
-    const winner = checkWinConditions(game);
-    if (winner) {
-        console.log("SERVER: Game " + game.gameId + " ended due to manual status change. Winner: " + winner.team);
-         clients.forEach(client => {
-            if (client.readyState === WebSocket.OPEN) {
-                console.log("SERVER: Sending game_over WS (player-status) for game " + game.gameId);
-                client.send(JSON.stringify({ type: 'game_over', gameId: game.gameId, payload: { winningTeam: winner.team, reason: winner.reason } }));
-            }
-        });
-    }
+    checkWinConditions(game); // This will set game.gameWinner and game.currentPhase if game ends
+                              // and also broadcast 'game_over' via WebSocket.
     res.status(200).json(game); 
 });
 
@@ -184,7 +199,7 @@ app.post('/api/games/:gameId/phase', (req, res) => {
     if (!game) return res.status(404).json({ message: "Game not found" });
     if (!phase) return res.status(400).json({ message: "Phase is required" });
     
-    if (game.gameWinner && game.gameWinner.team) return res.status(400).json({ message: "Game is already finished."});
+    if (game.gameWinner) return res.status(400).json({ message: "Game is already finished."});
 
     if (phase !== 'setup' && game.currentPhase === 'setup' && !Object.values(game.playersInGame).some(p => p.roleName)) {
          return res.status(400).json({ message: "Cannot start phase. Roles not assigned yet."});
@@ -209,29 +224,22 @@ app.post('/api/games/:gameId/phase', (req, res) => {
             } else {
                 eliminationResult.specialInfo = game.werewolfNightTarget + " was already eliminated.";
             }
-        } else {
+        } else if (game.currentPhase !== 'setup' && game.currentPhase !== 'roles_assigned') { // Avoid "no one eliminated" on first day
             eliminationResult.specialInfo = "No one was eliminated by werewolves.";
         }
         game.werewolfNightTarget = null; 
         game.playersOnTrial = []; game.votes = {}; 
     }
     
-    if (game.gameWinner && game.gameWinner.team) {
-         clients.forEach(client => {
-            if (client.readyState === WebSocket.OPEN) {
-                console.log("SERVER: Sending game_over WS (phase change) for game " + game.gameId);
-                client.send(JSON.stringify({ type: 'game_over', gameId: game.gameId, payload: { winningTeam: game.gameWinner.team, reason: game.gameWinner.reason } }));
-            }
-        });
-    }
-    res.status(200).json({ message: "Phase updated", currentPhase: game.currentPhase, eliminationResult, gameWinner: game.gameWinner });
+    // The game_over WS message is now sent from within checkWinConditions if the game ends.
+    res.status(200).json(game); // Return the full game state
 });
 
 app.post('/api/games/:gameId/action', (req, res) => {
     const game = games[req.params.gameId];
     const { actionType, targetPlayerName } = req.body;
     if (!game) return res.status(404).json({ message: "Game not found" });
-    if (game.gameWinner && game.gameWinner.team) return res.status(400).json({ message: "Game is already finished."});
+    if (game.gameWinner) return res.status(400).json({ message: "Game is already finished."});
     if (game.currentPhase !== 'night') return res.status(400).json({ message: "Actions only at night." });
 
     if (actionType === 'seerCheck') {
@@ -254,7 +262,7 @@ app.post('/api/games/:gameId/start-vote', (req, res) => {
     const game = games[req.params.gameId];
     const { playerNamesOnTrial } = req.body;
     if (!game) return res.status(404).json({ message: "Game not found" });
-    if (game.gameWinner && game.gameWinner.team) return res.status(400).json({ message: "Game is already finished."});
+    if (game.gameWinner) return res.status(400).json({ message: "Game is already finished."});
     if (game.currentPhase !== 'day') return res.status(400).json({ message: "Can only start vote during the day." });
     if (!Array.isArray(playerNamesOnTrial) || playerNamesOnTrial.some(name => !game.playersInGame[name] || game.playersInGame[name].status !== 'alive')) {
         return res.status(400).json({ message: "Invalid players for trial." });
@@ -271,7 +279,7 @@ app.post('/api/games/:gameId/update-vote', (req, res) => {
     const game = games[req.params.gameId];
     const { playerName, change } = req.body;
     if (!game) return res.status(404).json({ message: "Game not found" });
-    if (game.gameWinner && game.gameWinner.team) return res.status(400).json({ message: "Game is already finished."});
+    if (game.gameWinner) return res.status(400).json({ message: "Game is already finished."});
     if (game.currentPhase !== 'voting') return res.status(400).json({ message: "Not in voting phase." });
     if (!game.playersOnTrial.includes(playerName)) return res.status(400).json({ message: "Player not on trial." });
     
@@ -285,19 +293,19 @@ app.post('/api/games/:gameId/update-vote', (req, res) => {
 app.post('/api/games/:gameId/clear-votes', (req, res) => {
     const game = games[req.params.gameId];
     if (!game) return res.status(404).json({ message: "Game not found" });
-    if (game.gameWinner && game.gameWinner.team) return res.status(400).json({ message: "Game is already finished."});
+    if (game.gameWinner) return res.status(400).json({ message: "Game is already finished."});
     if (game.currentPhase !== 'voting') return res.status(400).json({ message: "Not in voting phase." });
     
     game.playersOnTrial.forEach(name => game.votes[name] = 0);
     console.log("Votes cleared for trial in game", game.gameId);
-    res.status(200).json({ votes: game.votes }); 
+    res.status(200).json(game); // Return full game state with cleared votes
 });
 
 app.post('/api/games/:gameId/process-elimination', (req, res) => {
     const game = games[req.params.gameId];
     const { eliminatedPlayerName } = req.body; 
     if (!game) return res.status(404).json({ message: "Game not found" });
-    if (game.gameWinner && game.gameWinner.team) return res.status(400).json({ message: "Game is already finished."});
+    if (game.gameWinner) return res.status(400).json({ message: "Game is already finished."});
     if (game.currentPhase !== 'voting') return res.status(400).json({ message: "Can only process from voting phase." });
 
     let actualEliminationMessage = "No one was eliminated by vote.";
@@ -312,19 +320,11 @@ app.post('/api/games/:gameId/process-elimination', (req, res) => {
         console.log(actualEliminationMessage);
     }
     
-    game.currentPhase = 'day'; 
+    game.currentPhase = 'day'; // Always return to day after processing a vote.
     game.playersOnTrial = [];
     game.votes = {};
 
-    if (game.gameWinner && game.gameWinner.team) {
-         clients.forEach(client => {
-            if (client.readyState === WebSocket.OPEN) {
-                console.log("SERVER: Sending game_over WS (process-elimination) for game " + game.gameId);
-                client.send(JSON.stringify({ type: 'game_over', gameId: game.gameId, payload: { winningTeam: game.gameWinner.team, reason: game.gameWinner.reason } }));
-            }
-        });
-    }
-
+    // Game over WS message is sent by checkWinConditions if applicable
     res.status(200).json(game); 
 });
 
@@ -347,7 +347,7 @@ wss.on('connection', (ws, req) => {
     console.log('WS Client connected:', clientIp, 'Total:', clients.size);
     ws.on('message', (message) => {
         const messageString = message.toString();
-        console.log('WS Received:', messageString);
+        // console.log('WS Received:', messageString); // Can be very verbose
         let parsedMessage;
         try { parsedMessage = JSON.parse(messageString); } 
         catch (e) { console.warn('WS non-JSON msg:', messageString); return; }
