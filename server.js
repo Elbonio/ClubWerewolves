@@ -13,7 +13,7 @@ const express = require('express');
 const app = express(); 
 app.use(express.json()); 
 
-const SERVER_VERSION = "0.8.2"; // Updated server version
+const SERVER_VERSION = "0.8.3"; // Updated server version
 
 // --- In-Memory Data Stores ---
 let masterPlayerList = []; // Array of player objects { id: string, name: string }
@@ -43,13 +43,12 @@ function broadcastToGameClients(gameId, messageObject) {
 
 function checkWinConditions(game) {
     if (!game || !game.playersInGame || Object.keys(game.playersInGame).length === 0 || !game.playerOrder) {
-        console.log("Win check skipped for game " + game.gameId + ": No players or game not fully initialized.");
+        // console.log("Win check skipped for game " + game.gameId + ": No players or game not fully initialized.");
         return null; 
     }
-    // Only proceed if roles have been assigned
     const rolesAssigned = game.playerOrder.some(name => game.playersInGame[name] && game.playersInGame[name].roleDetails);
     if (!rolesAssigned && game.currentPhase !== 'setup' && game.currentPhase !== 'roles_assigned') {
-        console.log("Win check skipped for game " + game.gameId + ": Roles not assigned yet.");
+        // console.log("Win check skipped for game " + game.gameId + ": Roles not assigned yet.");
         return null;
     }
     if (game.gameWinner && game.gameWinner.team) return game.gameWinner; 
@@ -227,15 +226,18 @@ app.post('/api/games/:gameId/phase', (req, res) => {
                 checkWinConditions(game); 
             } else {
                 eliminationResult.specialInfo = game.werewolfNightTarget + " was already eliminated.";
+                 console.log(game.werewolfNightTarget + " was already targeted but is eliminated in game " + game.gameId);
             }
-        } else if (game.currentPhase !== 'setup' && game.currentPhase !== 'roles_assigned') { 
+        } else if (game.currentPhase !== 'setup' && game.currentPhase !== 'roles_assigned' && game.playerOrder.length > 0) { // Only say "no one eliminated" if game has started
             eliminationResult.specialInfo = "No one was eliminated by werewolves.";
+            console.log("No werewolf elimination in game " + game.gameId);
         }
         game.werewolfNightTarget = null; 
         game.playersOnTrial = []; game.votes = {}; 
     }
     
-    // game_over WS message is sent by checkWinConditions if applicable
+    // The game_over WS message is now sent from within checkWinConditions if the game ends.
+    // The API response still contains the full game state, including gameWinner.
     res.status(200).json(game); 
 });
 
