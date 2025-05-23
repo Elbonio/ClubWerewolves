@@ -6,7 +6,7 @@
 
 const WebSocket = require('ws');
 const http = require('http');
-const fs =require('fs');
+const fs = require('fs');
 const path = require('path');
 const express = require('express'); 
 
@@ -25,33 +25,39 @@ const ALL_ROLES_SERVER = {
 
 // --- Helper Functions ---
 function getPlayerByName(playerName) {
+    if (!playerName) return null;
     return masterPlayerList.find(p => p.name.toLowerCase() === playerName.toLowerCase());
 }
 
 function checkWinConditions(game) {
-    if (!game || !game.playersInGame || Object.keys(game.playersInGame).length === 0) {
-        return null; // No game or no players
+    if (!game || !game.playersInGame || Object.keys(game.playersInGame).length === 0 || !game.playerOrder) {
+        console.log("Win check skipped for game " + game.gameId + ": No players or game not fully initialized.");
+        return null; 
     }
 
-    const alivePlayers = game.playerOrder.filter(name => game.playersInGame[name] && game.playersInGame[name].status === 'alive');
-    if (alivePlayers.length === 0 && game.currentPhase !== 'setup' && game.currentPhase !== 'roles_assigned') { // Avoid triggering on empty new game
+    const alivePlayersWithRoles = game.playerOrder.filter(name => game.playersInGame[name] && game.playersInGame[name].status === 'alive' && game.playersInGame[name].roleDetails);
+    
+    if (alivePlayersWithRoles.length === 0 && game.currentPhase !== 'setup' && game.currentPhase !== 'roles_assigned') {
          game.gameWinner = { team: "No One", reason: "All players eliminated." };
          game.currentPhase = 'finished';
+         console.log("Game " + game.gameId + " ended: All players eliminated.");
          return game.gameWinner;
     }
+    
+    // Ensure roleDetails exists before trying to access alignment
+    const aliveWerewolves = alivePlayersWithRoles.filter(name => game.playersInGame[name].roleDetails.alignment === "Werewolf");
+    const aliveNonWerewolves = alivePlayersWithRoles.filter(name => game.playersInGame[name].roleDetails.alignment !== "Werewolf");
 
-
-    const aliveWerewolves = alivePlayers.filter(name => game.playersInGame[name].roleDetails.alignment === "Werewolf");
-    const aliveVillagers = alivePlayers.filter(name => game.playersInGame[name].roleDetails.alignment === "Village"); // Includes Seer for this count
-
-    if (aliveWerewolves.length === 0 && alivePlayers.length > 0) { // Village wins if all werewolves are gone AND villagers remain
+    if (aliveWerewolves.length === 0 && aliveNonWerewolves.length > 0) { 
         game.gameWinner = { team: "Village", reason: "All werewolves have been eliminated." };
         game.currentPhase = 'finished';
+        console.log("Game " + game.gameId + " ended: Village wins.");
         return game.gameWinner;
     }
-    if (aliveWerewolves.length >= aliveVillagers.length && aliveWerewolves.length > 0) { // Werewolves win if they equal or outnumber villagers
+    if (aliveWerewolves.length > 0 && aliveWerewolves.length >= aliveNonWerewolves.length) { 
         game.gameWinner = { team: "Werewolves", reason: "Werewolves have overwhelmed the village." };
         game.currentPhase = 'finished';
+        console.log("Game " + game.gameId + " ended: Werewolves win.");
         return game.gameWinner;
     }
     return null; // No winner yet
@@ -74,7 +80,13 @@ app.post('/api/master-players', (req, res) => {
 });
 
 app.get('/api/games', (req, res) => {
-    const gameList = Object.values(games).map(g => ({ gameId: g.gameId, gameName: g.gameName, playerCount: g.playerOrder.length, currentPhase: g.currentPhase, gameWinner: g.gameWinner }));
+    const gameList = Object.values(games).map(g => ({ 
+        gameId: g.gameId, 
+        gameName: g.gameName, 
+        playerCount: g.playerOrder ? g.playerOrder.length : 0, 
+        currentPhase: g.currentPhase,
+        gameWinner: g.gameWinner // Include winner info in list
+    }));
     res.json(gameList);
 });
 
@@ -119,7 +131,7 @@ app.post('/api/games/:gameId/players', (req, res) => {
     if (game.seerPlayerName && !game.playersInGame[game.seerPlayerName]) game.seerPlayerName = null;
     if (game.werewolfNightTarget && !game.playersInGame[game.werewolfNightTarget]) game.werewolfNightTarget = null;
     console.log('Players updated for game', game.gameId);
-    res.status(200).json({ playersInGame: game.playersInGame, playerOrder: game.playerOrder });
+    res.status(200).json(game); // Return full updated game state
 });
 
 app.post('/api/games/:gameId/assign-roles', (req, res) => {
@@ -142,7 +154,7 @@ app.post('/api/games/:gameId/assign-roles', (req, res) => {
     });
     game.playersInGame = newPlayersInGameData; game.currentPhase = 'roles_assigned'; game.werewolfNightTarget = null;
     console.log('Roles assigned for', game.gameId);
-    res.status(200).json(game); // Return full game state
+    res.status(200).json(game);
 });
 
 app.post('/api/games/:gameId/player-status', (req, res) => {
@@ -150,14 +162,24 @@ app.post('/api/games/:gameId/player-status', (req, res) => {
     const { playerName, status } = req.body;
     if (!game || !game.playersInGame[playerName]) return res.status(404).json({ message: 'Game or player not found.' });
     if (status !== 'alive' && status !== 'eliminated') return res.status(400).json({ message: 'Invalid status.' });
+    
     game.playersInGame[playerName].status = status;
     console.log('Status for', playerName, 'in', game.gameId, 'to', status);
-    // Check win conditions after manual status change (e.g. moderator eliminates someone)
-    // However, the main win condition check is tied to phase changes or explicit elimination processing.
-    // For manual override, the moderator is in control. If they eliminate the last werewolf, they'd then end the game.
-    // We could add a win check here, but it might be premature if it's mid-phase.
-    // Let's assume for now manual eliminations are just that, and win checks are tied to phase transitions/vote processing.
-    res.status(200).json(game.playersInGame[playerName]);
+    
+    // Check win conditions after a manual status change by moderator
+    // This might be an immediate game ender
+    const winner = checkWinConditions(game);
+    if (winner) {
+        console.log("Game " + game.gameId + " ended due to manual status change. Winner: " + winner.team);
+        // Client will reload game state and see the 'finished' phase and winner.
+        // A WebSocket message for game_over will also be sent from here.
+         clients.forEach(client => {
+            if (client.readyState === WebSocket.OPEN) {
+                client.send(JSON.stringify({ type: 'game_over', gameId: game.gameId, payload: { winningTeam: winner.team, reason: winner.reason } }));
+            }
+        });
+    }
+    res.status(200).json(game); // Return full game state
 });
 
 app.post('/api/games/:gameId/phase', (req, res) => {
@@ -166,20 +188,18 @@ app.post('/api/games/:gameId/phase', (req, res) => {
     if (!game) return res.status(404).json({ message: "Game not found" });
     if (!phase) return res.status(400).json({ message: "Phase is required" });
     
-    if (game.currentPhase === 'finished') return res.status(400).json({ message: "Game is already finished."});
+    if (game.gameWinner && game.gameWinner.team) return res.status(400).json({ message: "Game is already finished."});
 
-    // Prevent starting phases if roles aren't assigned (unless it's back to setup)
     if (phase !== 'setup' && game.currentPhase === 'setup' && !Object.values(game.playersInGame).some(p => p.roleName)) {
          return res.status(400).json({ message: "Cannot start phase. Roles not assigned yet."});
     }
     
     game.currentPhase = phase;
     let eliminationResult = { eliminatedPlayerName: null, specialInfo: null };
-    let gameWinner = null;
 
     if (phase === 'night') {
         game.werewolfNightTarget = null; 
-        game.playersOnTrial = []; game.votes = {}; // Clear any previous voting state
+        game.playersOnTrial = []; game.votes = {}; 
         console.log("Game " + game.gameId + " phase changed to NIGHT");
     } else if (phase === 'day') {
         console.log("Game " + game.gameId + " phase changed to DAY");
@@ -189,7 +209,7 @@ app.post('/api/games/:gameId/phase', (req, res) => {
                 eliminationResult.eliminatedPlayerName = game.werewolfNightTarget;
                 game.gameLog.push(game.werewolfNightTarget + " was eliminated by werewolves.");
                 console.log(game.werewolfNightTarget + " eliminated by WW in " + game.gameId);
-                gameWinner = checkWinConditions(game); // Check win after werewolf elimination
+                checkWinConditions(game); 
             } else {
                 eliminationResult.specialInfo = game.werewolfNightTarget + " was already eliminated.";
             }
@@ -197,7 +217,15 @@ app.post('/api/games/:gameId/phase', (req, res) => {
             eliminationResult.specialInfo = "No one was eliminated by werewolves.";
         }
         game.werewolfNightTarget = null; 
-        game.playersOnTrial = []; game.votes = {}; // Clear voting state for new day
+        game.playersOnTrial = []; game.votes = {}; 
+    }
+    
+    if (game.gameWinner && game.gameWinner.team) {
+         clients.forEach(client => {
+            if (client.readyState === WebSocket.OPEN) {
+                client.send(JSON.stringify({ type: 'game_over', gameId: game.gameId, payload: { winningTeam: game.gameWinner.team, reason: game.gameWinner.reason } }));
+            }
+        });
     }
     res.status(200).json({ message: "Phase updated", currentPhase: game.currentPhase, eliminationResult, gameWinner: game.gameWinner });
 });
@@ -206,6 +234,7 @@ app.post('/api/games/:gameId/action', (req, res) => {
     const game = games[req.params.gameId];
     const { actionType, targetPlayerName } = req.body;
     if (!game) return res.status(404).json({ message: "Game not found" });
+    if (game.gameWinner && game.gameWinner.team) return res.status(400).json({ message: "Game is already finished."});
     if (game.currentPhase !== 'night') return res.status(400).json({ message: "Actions only at night." });
 
     if (actionType === 'seerCheck') {
@@ -224,87 +253,83 @@ app.post('/api/games/:gameId/action', (req, res) => {
     return res.status(400).json({ message: "Unknown action." });
 });
 
-// Voting Endpoints
 app.post('/api/games/:gameId/start-vote', (req, res) => {
     const game = games[req.params.gameId];
     const { playerNamesOnTrial } = req.body;
     if (!game) return res.status(404).json({ message: "Game not found" });
+    if (game.gameWinner && game.gameWinner.team) return res.status(400).json({ message: "Game is already finished."});
     if (game.currentPhase !== 'day') return res.status(400).json({ message: "Can only start vote during the day." });
     if (!Array.isArray(playerNamesOnTrial) || playerNamesOnTrial.some(name => !game.playersInGame[name] || game.playersInGame[name].status !== 'alive')) {
-        return res.status(400).json({ message: "Invalid players for trial (must be alive and in game)." });
+        return res.status(400).json({ message: "Invalid players for trial." });
     }
     game.playersOnTrial = playerNamesOnTrial;
     game.votes = {};
     playerNamesOnTrial.forEach(name => game.votes[name] = 0);
     game.currentPhase = 'voting';
     console.log("Voting started for:", playerNamesOnTrial, "in game", game.gameId);
-    res.status(200).json({ message: "Voting started", playersOnTrial: game.playersOnTrial, votes: game.votes, currentPhase: game.currentPhase });
+    res.status(200).json(game); // Return full game state
 });
 
 app.post('/api/games/:gameId/update-vote', (req, res) => {
     const game = games[req.params.gameId];
     const { playerName, change } = req.body;
     if (!game) return res.status(404).json({ message: "Game not found" });
+    if (game.gameWinner && game.gameWinner.team) return res.status(400).json({ message: "Game is already finished."});
     if (game.currentPhase !== 'voting') return res.status(400).json({ message: "Not in voting phase." });
     if (!game.playersOnTrial.includes(playerName)) return res.status(400).json({ message: "Player not on trial." });
     
     game.votes[playerName] = (game.votes[playerName] || 0) + parseInt(change);
-    if (game.votes[playerName] < 0) game.votes[playerName] = 0; // Votes can't be negative
+    if (game.votes[playerName] < 0) game.votes[playerName] = 0; 
     
     console.log("Vote updated for", playerName, "to", game.votes[playerName], "in game", game.gameId);
-    res.status(200).json({ message: "Vote updated", votes: game.votes });
+    res.status(200).json({ votes: game.votes }); // Only need to send votes back
 });
 
 app.post('/api/games/:gameId/clear-votes', (req, res) => {
     const game = games[req.params.gameId];
     if (!game) return res.status(404).json({ message: "Game not found" });
-    if (game.currentPhase !== 'voting') return res.status(400).json({ message: "Not in voting phase to clear votes." });
+    if (game.gameWinner && game.gameWinner.team) return res.status(400).json({ message: "Game is already finished."});
+    if (game.currentPhase !== 'voting') return res.status(400).json({ message: "Not in voting phase." });
     
     game.playersOnTrial.forEach(name => game.votes[name] = 0);
-    console.log("Votes cleared for current trial in game", game.gameId);
-    res.status(200).json({ message: "Votes cleared", votes: game.votes });
+    console.log("Votes cleared for trial in game", game.gameId);
+    res.status(200).json({ votes: game.votes }); // Send cleared votes
 });
 
 app.post('/api/games/:gameId/process-elimination', (req, res) => {
     const game = games[req.params.gameId];
-    const { eliminatedPlayerName } = req.body; // This is optional
+    const { eliminatedPlayerName } = req.body; 
     if (!game) return res.status(404).json({ message: "Game not found" });
-    if (game.currentPhase !== 'voting' && game.currentPhase !== 'day') { // Allow processing from day if skipping vote
-        return res.status(400).json({ message: "Can only process elimination from voting or day phase." });
-    }
+    if (game.gameWinner && game.gameWinner.team) return res.status(400).json({ message: "Game is already finished."});
+    if (game.currentPhase !== 'voting') return res.status(400).json({ message: "Can only process from voting phase." });
 
-    let actualEliminationHappened = false;
+    let actualEliminationMessage = "No one was eliminated by vote.";
     if (eliminatedPlayerName && game.playersInGame[eliminatedPlayerName] && game.playersInGame[eliminatedPlayerName].status === 'alive') {
         game.playersInGame[eliminatedPlayerName].status = 'eliminated';
-        actualEliminationHappened = true;
-        game.gameLog.push(eliminatedPlayerName + " was eliminated by vote.");
-        console.log(eliminatedPlayerName + " eliminated by vote in game " + game.gameId);
+        actualEliminationMessage = eliminatedPlayerName + " was eliminated by vote.";
+        game.gameLog.push(actualEliminationMessage);
+        console.log(actualEliminationMessage + " In game " + game.gameId);
+        checkWinConditions(game);
     } else if (eliminatedPlayerName) {
-        console.log("Attempted to eliminate " + eliminatedPlayerName + " by vote, but player not found or not alive.");
+        actualEliminationMessage = "Attempted to eliminate " + eliminatedPlayerName + ", but they were not found or not alive.";
+        console.log(actualEliminationMessage);
     }
-
-    const winner = checkWinConditions(game);
     
-    if (!winner) { // If game not over
-        game.currentPhase = 'day'; // Default back to day, or could go to night if an elimination happened
-        if (actualEliminationHappened) {
-            // If someone was eliminated, typically goes to night.
-            // For now, let's simplify: if someone was eliminated, we'll let the mod click "Start Night".
-            // If no one eliminated, stays day for more discussion/re-vote.
-            // Or, more simply, always go back to 'day' and let mod decide next phase.
-             game.currentPhase = 'day'; // Or could be 'night' if you want immediate transition
-        }
-    } // If winner, currentPhase is already set to 'finished' by checkWinConditions
-
+    // Regardless of elimination, phase typically moves back to day (or night if game rules dictate)
+    // For simplicity, let's always return to 'day' phase after a vote, allowing mod to start night.
+    game.currentPhase = 'day'; 
     game.playersOnTrial = [];
     game.votes = {};
 
-    res.status(200).json({ 
-        message: "Elimination processed. Eliminated: " + (eliminatedPlayerName || "None"),
-        currentPhase: game.currentPhase,
-        playersInGame: game.playersInGame,
-        gameWinner: game.gameWinner
-    });
+    if (game.gameWinner && game.gameWinner.team) {
+         clients.forEach(client => {
+            if (client.readyState === WebSocket.OPEN) {
+                client.send(JSON.stringify({ type: 'game_over', gameId: game.gameId, payload: { winningTeam: game.gameWinner.team, reason: game.gameWinner.reason } }));
+            }
+        });
+    }
+
+    res.status(200).json(game); // Return full updated game state
 });
 
 
@@ -312,7 +337,7 @@ app.post('/api/games/:gameId/process-elimination', (req, res) => {
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'moderator.html')));
 app.get('/moderator.html', (req, res) => res.sendFile(path.join(__dirname, 'moderator.html')));
 app.get('/display.html', (req, res) => res.sendFile(path.join(__dirname, 'display.html')));
-app.use((req, res) => res.status(404).send('Resource not found: ' + req.url)); // Fallback for 404
+app.use((req, res) => res.status(404).send('Resource not found: ' + req.url));
 
 const server = http.createServer(app); 
 const wss = new WebSocket.Server({ server }); 
@@ -332,6 +357,8 @@ wss.on('connection', (ws, req) => {
         catch (e) { console.warn('WS non-JSON msg:', messageString); return; }
         
         clients.forEach(client => {
+            // Only send game-specific messages if the gameId matches or if it's a broadcast type
+            // For now, all messages are broadcasted; filtering per game can be added if WS clients subscribe to games.
             if (client.readyState === WebSocket.OPEN) {
                 client.send(JSON.stringify(parsedMessage));
             }

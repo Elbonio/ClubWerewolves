@@ -35,7 +35,10 @@
                 <h3 class="text-lg font-medium text-gray-300 mb-2">Load Existing Game:</h3>
                 <ul id="existingGamesList" class="bg-gray-600 rounded-lg p-3 min-h-[50px] max-h-40 overflow-y-auto"></ul>
             </div>
-            <p id="currentGameInfo" class="mt-4 text-purple-300 font-semibold">No game loaded.</p>
+            <div id="currentGameStatusContainer" class="mt-4">
+                <p id="currentGameInfo" class="text-purple-300 font-semibold">No game loaded.</p>
+                <p id="currentGamePhaseInfo" class="text-sky-300"></p>
+            </div>
             <div id="gameOverMessage" class="hidden mt-4 p-4 bg-yellow-500 text-gray-900 rounded-lg text-center font-bold text-xl"></div>
         </div>
         
@@ -176,6 +179,7 @@
             const createNewGameBtn = document.getElementById('createNewGameBtn');
             const existingGamesList = document.getElementById('existingGamesList');
             const currentGameInfo = document.getElementById('currentGameInfo');
+            const currentGamePhaseInfo = document.getElementById('currentGamePhaseInfo'); // New element
             const gameOverMessage = document.getElementById('gameOverMessage');
             
             const masterPlayerNameInput = document.getElementById('masterPlayerNameInput');
@@ -221,14 +225,17 @@
                 socket = new WebSocket(wsProtocol + '//' + wsHost);
                 socket.onopen = () => updateStatus('Connected to WebSocket server.', 'success');
                 socket.onmessage = (event) => {
-                    // Listen for vote updates from server to potentially update moderator view if needed
-                    // Though moderator panel primarily drives state and reloads.
                     const data = JSON.parse(event.data);
                     if (data.type === 'vote_update' && data.gameId === currentLoadedGameId) {
                         logToModerator('Vote update received via WS.', 'WS Received');
                         if (data.payload && data.payload.votes) {
-                             currentVotes = data.payload.votes; // Update local vote cache
-                             renderVoteTally(); // Re-render moderator's view of votes
+                             currentVotes = data.payload.votes; 
+                             renderVoteTally(); 
+                        }
+                    } else if (data.type === 'game_over' && data.gameId === currentLoadedGameId) {
+                        logToModerator('Game Over message received via WS.', 'WS Received');
+                        if (data.payload) {
+                            loadSpecificGame(currentLoadedGameId); // Reload to reflect final game state
                         }
                     } else {
                         logToModerator('WS Server: ' + event.data, 'Received');
@@ -269,7 +276,7 @@
                     socket.send(JSON.stringify(messageToSend));
                     let logMessageContent = "Unknown action";
                     if (payload.content) logMessageContent = payload.content;
-                    else if (payload.payload) logMessageContent = payload.payload.playerName || payload.payload.targetPlayerName || payload.payload.alignment || payload.payload.message || JSON.stringify(payload.payload);
+                    else if (payload.payload) logMessageContent = payload.payload.playerName || payload.payload.targetPlayerName || payload.payload.alignment || payload.payload.message || payload.payload.winningTeam || JSON.stringify(payload.payload);
                     logToModerator(type + ': ' + logMessageContent, 'WS Sent');
                 } else {
                     updateStatus('Not connected to WS. Cannot send message.', 'error');
@@ -304,7 +311,11 @@
                     }
                     games.forEach(game => {
                         const li = document.createElement('li');
-                        li.textContent = game.gameName + ' (Players: ' + game.playerCount + ', Phase: ' + game.currentPhase + ')';
+                        let gameDisplayText = game.gameName + ' (Players: ' + game.playerCount + ', Phase: ' + game.currentPhase + ')';
+                        if (game.gameWinner && game.gameWinner.team) {
+                            gameDisplayText += ' - WINNER: ' + game.gameWinner.team;
+                        }
+                        li.textContent = gameDisplayText;
                         li.dataset.gameId = game.gameId;
                         li.className = 'game-list-item hover:bg-gray-500 rounded';
                         li.onclick = () => loadSpecificGame(game.gameId);
@@ -314,7 +325,7 @@
             }
 
             async function loadSpecificGame(gameId) {
-                logToModerator('Loading game: ' + gameId, 'System');
+                logToModerator('Attempting to load game: ' + gameId, 'System');
                 const gameData = await fetchFromServer('/api/games/' + gameId);
 
                 if (gameData) {
@@ -327,8 +338,8 @@
                     playersOnTrialForVote = gameData.playersOnTrial || [];
                     currentVotes = gameData.votes || {};
                     
-                    logToModerator('Successfully loaded game state for ' + gameData.gameName, 'System');
-                    updateUIAfterGameLoad(gameData.gameWinner); // Pass gameWinner if present
+                    logToModerator('Successfully loaded game state for ' + gameData.gameName + ' - Phase: ' + currentPhase, 'System');
+                    updateUIAfterGameLoad(gameData.gameWinner); 
                 } else {
                     logToModerator('Failed to load game data for ' + gameId, 'Error');
                     currentGameInfo.textContent = 'Failed to load game: ' + gameId;
@@ -340,17 +351,20 @@
             function updateUIAfterGameLoad(gameWinnerData = null) {
                 if (!currentLoadedGameId) {
                     hideAllGameSpecificSections();
+                    currentGamePhaseInfo.textContent = '';
                     gameOverMessage.classList.add('hidden');
                     return;
                 }
 
+                currentGamePhaseInfo.textContent = 'Current Phase: ' + currentPhase.charAt(0).toUpperCase() + currentPhase.slice(1);
+
                 if (gameWinnerData && gameWinnerData.team) {
                     gameOverMessage.textContent = "GAME OVER! " + gameWinnerData.team + " wins! Reason: " + (gameWinnerData.reason || "Win condition met.");
                     gameOverMessage.classList.remove('hidden');
-                    currentGameSpecificsSection.classList.add('hidden'); // Hide game controls
+                    currentGameSpecificsSection.classList.add('hidden'); // Hide all game controls
                 } else {
                     gameOverMessage.classList.add('hidden');
-                    currentGameSpecificsSection.classList.remove('hidden');
+                    currentGameSpecificsSection.classList.remove('hidden'); // Show game controls
                 }
                 
                 currentGameSetupSection.classList.remove('hidden');
@@ -363,36 +377,51 @@
                 const rolesAreAssigned = playersInCurrentGame.length > 0 && 
                                          playersInCurrentGame.every(pName => gameRoles[pName] && gameRoles[pName].roleName);
 
-                if (rolesAreAssigned && (!gameWinnerData || !gameWinnerData.team)) {
-                    gamePhaseSection.classList.remove('hidden');
-                    manualRevealSection.classList.remove('hidden');
-                    assignedRolesContainer.classList.remove('hidden'); 
-                    
-                    if (currentPhase === 'night') {
-                        nightActionsSection.classList.remove('hidden');
-                        votingSection.classList.add('hidden'); // Hide voting during night
-                    } else if (currentPhase === 'day' || currentPhase === 'voting') {
-                        nightActionsSection.classList.add('hidden');
-                        votingSection.classList.remove('hidden');
-                        renderAlivePlayerSelectionForVote();
-                        if (currentPhase === 'voting') {
-                            setupVoteContainer.classList.add('hidden');
-                            activeVotingContainer.classList.remove('hidden');
-                            renderVoteTally();
-                        } else { // 'day' phase, setup vote
-                            setupVoteContainer.classList.remove('hidden');
-                            activeVotingContainer.classList.add('hidden');
+                // Enable/disable sections based on whether game is finished
+                const gameIsFinished = (gameWinnerData && gameWinnerData.team);
+                [gamePhaseSection, nightActionsSection, manualRevealSection, votingSection, assignRolesBtn, currentGameSetupSection, currentRoleAssignmentSection].forEach(el => {
+                    if (el) el.disabled = gameIsFinished; // Disable buttons
+                });
+                // More granular hiding based on phase, only if game not finished
+                if (!gameIsFinished) {
+                    if (rolesAreAssigned) {
+                        gamePhaseSection.classList.remove('hidden');
+                        manualRevealSection.classList.remove('hidden');
+                        assignedRolesContainer.classList.remove('hidden'); 
+                        
+                        if (currentPhase === 'night') {
+                            nightActionsSection.classList.remove('hidden');
+                            votingSection.classList.add('hidden');
+                        } else if (currentPhase === 'day' || currentPhase === 'voting') {
+                            nightActionsSection.classList.add('hidden');
+                            votingSection.classList.remove('hidden');
+                            renderAlivePlayerSelectionForVote();
+                            if (currentPhase === 'voting') {
+                                setupVoteContainer.classList.add('hidden');
+                                activeVotingContainer.classList.remove('hidden');
+                                renderVoteTally();
+                            } else { 
+                                setupVoteContainer.classList.remove('hidden');
+                                activeVotingContainer.classList.add('hidden');
+                            }
+                        } else { 
+                            nightActionsSection.classList.add('hidden');
+                            votingSection.classList.add('hidden');
                         }
-                    } else { // e.g. 'setup', 'roles_assigned'
+                    } else { 
+                        gamePhaseSection.classList.add('hidden');
                         nightActionsSection.classList.add('hidden');
+                        manualRevealSection.classList.add('hidden');
+                        assignedRolesContainer.classList.add('hidden'); 
                         votingSection.classList.add('hidden');
                     }
-                } else { 
-                    gamePhaseSection.classList.add('hidden');
-                    nightActionsSection.classList.add('hidden');
-                    manualRevealSection.classList.add('hidden');
-                    assignedRolesContainer.classList.add('hidden'); 
-                    votingSection.classList.add('hidden');
+                } else { // Game is finished, hide most control sections
+                     gamePhaseSection.classList.add('hidden');
+                     nightActionsSection.classList.add('hidden');
+                     manualRevealSection.classList.add('hidden');
+                     votingSection.classList.add('hidden');
+                     currentRoleAssignmentSection.classList.add('hidden'); // Hide role assignment too
+                     if (assignedRolesContainer) assignedRolesContainer.classList.remove('hidden'); // Keep roles visible
                 }
                 updateNightActionSelectors();
 
@@ -407,6 +436,7 @@
             function hideAllGameSpecificSections() {
                 currentGameSpecificsSection.classList.add('hidden');
                 gameOverMessage.classList.add('hidden');
+                currentGamePhaseInfo.textContent = '';
             }
 
             createNewGameBtn.addEventListener('click', async () => {
@@ -657,7 +687,7 @@
                 });
 
                 if (phaseUpdate) { 
-                    logToModerator("Day phase started (server updated). Elimination result: " + JSON.stringify(phaseUpdate.eliminationResult), "Phase");
+                    logToModerator("Day phase processing complete (server updated).", "Phase");
                     const daybreakPayload = {
                         phase: 'day',
                         message: "Daybreak! Open your eyes and discuss.",
@@ -746,16 +776,20 @@
                 if (targetResult) { 
                     logToModerator("Werewolves targeted: " + targetPlayerName + " (server updated).", "Werewolf Action");
                     sendWebSocketMessage('moderator_message', { content: "The werewolves have chosen their target..." });
-                    // UI might indicate target chosen, or rely on next game state load
+                    // Server now stores this target, no need to update local werewolfNightTarget directly
                 } else {
                      logToModerator("Failed to record werewolf target on server for " + targetPlayerName, "Error");
                 }
             });
 
-            // --- Voting System ---
             function renderAlivePlayerSelectionForVote() {
                 alivePlayerSelectionForVote.innerHTML = '';
-                if (!currentLoadedGameId || currentPhase !== 'day') return;
+                if (!currentLoadedGameId || (currentPhase !== 'day' && currentPhase !== 'voting')) {
+                    votingSection.classList.add('hidden');
+                    return;
+                }
+                
+                votingSection.classList.remove('hidden'); // Show the whole voting section
 
                 const alivePlayersForVote = playersInCurrentGame.filter(p => gameRoles[p] && gameRoles[p].status === 'alive');
                 if (alivePlayersForVote.length === 0) {
@@ -764,6 +798,7 @@
                 }
                 alivePlayersForVote.forEach(playerName => {
                     const div = document.createElement('div');
+                    div.className = "flex items-center my-1";
                     const checkbox = document.createElement('input');
                     checkbox.type = 'checkbox';
                     checkbox.id = 'voteSelect-' + playerName.replace(/\s+/g, '-');
@@ -796,7 +831,7 @@
                 });
                 if (result) {
                     logToModerator("Voting started for: " + selectedForTrial.join(', '), "Voting");
-                    sendWebSocketMessage('voting_update', { payload: { playersOnTrial: selectedForTrial, votes: result.votes || {} } }); // Send initial votes (all 0)
+                    sendWebSocketMessage('voting_update', { payload: { gameId: currentLoadedGameId, playersOnTrial: result.playersOnTrial || [], votes: result.votes || {} } });
                     await loadSpecificGame(currentLoadedGameId); // Reload to update phase and UI
                 }
             });
@@ -805,7 +840,7 @@
                 voteTallyDisplay.innerHTML = '';
                 if (!currentLoadedGameId || currentPhase !== 'voting' || playersOnTrialForVote.length === 0) {
                     activeVotingContainer.classList.add('hidden');
-                    setupVoteContainer.classList.remove('hidden'); // Show setup if not voting
+                    if (currentPhase === 'day') setupVoteContainer.classList.remove('hidden'); // Show setup if day phase
                     return;
                 }
                 setupVoteContainer.classList.add('hidden');
@@ -813,35 +848,37 @@
 
                 let maxVotes = 0;
                 if (Object.values(currentVotes).length > 0) {
-                    maxVotes = Math.max(...Object.values(currentVotes), 0);
+                    maxVotes = Math.max(...Object.values(currentVotes).map(v => Number(v)), 0);
                 }
+                const totalPlayersOnTrial = playersOnTrialForVote.length;
 
                 playersOnTrialForVote.forEach(playerName => {
                     const votes = currentVotes[playerName] || 0;
                     const itemDiv = document.createElement('div');
-                    itemDiv.className = 'vote-item p-2 rounded ' + (votes > 0 && votes === maxVotes ? 'leading-vote' : '');
+                    itemDiv.className = 'vote-item p-2 rounded ' + (votes > 0 && votes === maxVotes ? 'leading-vote bg-yellow-700' : 'bg-gray-600');
 
                     const nameSpan = document.createElement('span');
-                    nameSpan.textContent = playerName + ': ';
-                    nameSpan.className = 'font-medium mr-2';
+                    nameSpan.textContent = playerName;
+                    nameSpan.className = 'font-medium mr-2 w-1/3 truncate';
                     
                     const voteBarContainer = document.createElement('div');
-                    voteBarContainer.className = 'vote-bar-container';
+                    voteBarContainer.className = 'vote-bar-container w-1/3';
                     const voteBar = document.createElement('div');
                     voteBar.className = 'vote-bar';
-                    const percentage = maxVotes > 0 ? (votes / Math.max(maxVotes, playersOnTrialForVote.length)) * 100 : 0; // Avoid division by zero, scale to num players if all zero
-                    voteBar.style.width = Math.min(percentage, 100) + '%'; // Cap at 100%
+                    // Scale bar width relative to max votes, or a sensible default if maxVotes is 0
+                    const barWidthPercentage = maxVotes > 0 ? (votes / maxVotes) * 100 : 0;
+                    voteBar.style.width = Math.min(barWidthPercentage, 100) + '%'; 
                     voteBar.textContent = votes;
                     voteBarContainer.appendChild(voteBar);
 
                     const voteButtonsDiv = document.createElement('div');
-                    voteButtonsDiv.className = 'flex gap-1';
+                    voteButtonsDiv.className = 'flex gap-1 w-1/3 justify-end';
                     const plusBtn = document.createElement('button');
-                    plusBtn.textContent = '+';
+                    plusBtn.textContent = '+1';
                     plusBtn.className = 'bg-green-500 hover:bg-green-600 text-white font-bold py-1 px-2 rounded text-xs';
                     plusBtn.onclick = () => updateVote(playerName, 1);
                     const minusBtn = document.createElement('button');
-                    minusBtn.textContent = '-';
+                    minusBtn.textContent = '-1';
                     minusBtn.className = 'bg-red-500 hover:bg-red-600 text-white font-bold py-1 px-2 rounded text-xs';
                     minusBtn.onclick = () => updateVote(playerName, -1);
                     
@@ -853,8 +890,8 @@
                     itemDiv.appendChild(voteButtonsDiv);
                     voteTallyDisplay.appendChild(itemDiv);
                 });
-                 // Send vote update to display after rendering locally
-                sendWebSocketMessage('voting_update', { payload: { playersOnTrial: playersOnTrialForVote, votes: currentVotes } });
+                // Send vote update to display.html via WebSocket
+                sendWebSocketMessage('voting_update', { payload: { gameId: currentLoadedGameId, playersOnTrial: playersOnTrialForVote, votes: currentVotes } });
             }
 
             async function updateVote(playerName, change) {
@@ -865,10 +902,9 @@
                     body: JSON.stringify({ playerName, change })
                 });
                 if (result && result.votes) {
-                    currentVotes = result.votes; // Update local cache of votes
+                    currentVotes = result.votes; 
                     logToModerator("Vote for " + playerName + (change > 0 ? ' increased.' : ' decreased.'), "Voting");
-                    renderVoteTally(); // Re-render moderator's view
-                    // WebSocket message for vote_update is handled by renderVoteTally
+                    renderVoteTally(); 
                 } else {
                      logToModerator("Failed to update vote for " + playerName, "Error");
                 }
@@ -880,7 +916,7 @@
                 const result = await fetchFromServer('/api/games/' + currentLoadedGameId + '/clear-votes', { method: 'POST' });
                 if (result) {
                     logToModerator("All votes cleared.", "Voting");
-                    await loadSpecificGame(currentLoadedGameId); // Reload to get fresh vote counts (all zero)
+                    await loadSpecificGame(currentLoadedGameId); 
                 }
             });
 
@@ -890,54 +926,46 @@
                 let maxVotes = -1;
                 let playersWithMaxVotes = [];
 
-                for (const player in currentVotes) {
-                    if (currentVotes[player] > maxVotes) {
-                        maxVotes = currentVotes[player];
+                Object.entries(currentVotes).forEach(([player, votes]) => {
+                    if (votes > maxVotes) {
+                        maxVotes = votes;
                         playersWithMaxVotes = [player];
-                    } else if (currentVotes[player] === maxVotes) {
+                    } else if (votes === maxVotes) {
                         playersWithMaxVotes.push(player);
                     }
-                }
+                });
 
-                if (maxVotes === -1 || playersWithMaxVotes.length === 0) { // No votes cast
-                    if (confirm("No votes cast. Continue day phase without elimination?")) {
-                        // Proceed without elimination
-                    } else {
-                        return; // User cancelled
-                    }
-                } else if (playersWithMaxVotes.length === 1) {
+                if (playersWithMaxVotes.length === 1 && maxVotes > 0) { // Only eliminate if one player has most votes and votes > 0
                     if (confirm("Eliminate " + playersWithMaxVotes[0] + " (Most votes: " + maxVotes + ")?")) {
                         eliminatedPlayerName = playersWithMaxVotes[0];
-                    } else if (!confirm("Proceed without elimination?")) {
-                        return; // User cancelled both options
-                    }
-                } else { // Tie
-                    const tiedPlayersString = playersWithMaxVotes.join(' or ');
-                    const chosen = prompt("Tie in votes for: " + tiedPlayersString + ". Enter name to eliminate, or leave blank to not eliminate anyone:");
+                    } else if (!confirm("Proceed without elimination and return to day phase?")) { return; }
+                } else if (playersWithMaxVotes.length > 1) { // Tie
+                    const chosen = prompt("TIE: " + playersWithMaxVotes.join(' & ') + " have " + maxVotes + " votes. Enter one name to eliminate, or leave blank to not eliminate anyone:");
                     if (chosen && playersWithMaxVotes.includes(chosen.trim())) {
                         eliminatedPlayerName = chosen.trim();
-                    } else if (chosen) {
-                        alert("Invalid player name entered for tie-breaker."); return;
-                    } else if (!confirm("No tie-breaker chosen. Proceed without elimination?")) {
-                        return; // User cancelled
-                    }
+                    } else if (chosen) { alert("Invalid player name for tie-breaker."); return; }
+                    else if (!confirm("No tie-breaker chosen. Return to day phase without elimination?")) { return; }
+                } else { // No votes or no clear majority
+                     if (!confirm("No player has a majority of votes. Return to day phase without elimination?")) { return; }
                 }
 
                 const result = await fetchFromServer('/api/games/' + currentLoadedGameId + '/process-elimination', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ eliminatedPlayerName }) // Send null if no one is eliminated
+                    body: JSON.stringify({ eliminatedPlayerName }) 
                 });
 
                 if (result) {
                     logToModerator("Vote processed. Eliminated: " + (eliminatedPlayerName || "None"), "Voting");
-                    sendWebSocketMessage('player_eliminated', { payload: { playerName: eliminatedPlayerName, source: 'vote' } }); // Send even if null for consistency
-                    await loadSpecificGame(currentLoadedGameId); // Reload full game state
+                    if (eliminatedPlayerName) {
+                        sendWebSocketMessage('player_eliminated', { payload: { gameId: currentLoadedGameId, playerName: eliminatedPlayerName, source: 'vote' } });
+                    } else {
+                        sendWebSocketMessage('moderator_message', { gameId: currentLoadedGameId, content: "No one was eliminated by vote. Discussion continues." });
+                    }
+                    await loadSpecificGame(currentLoadedGameId); 
                 }
             });
-
-
-            // Manual Reveals (no change needed here for game state logic yet)
+            
             manualShowIsWerewolfBtn.addEventListener('click', () => sendWebSocketMessage('manual_reveal', { payload: { alignment: "Is a Werewolf" } }));
             manualShowNotWerewolfBtn.addEventListener('click', () => sendWebSocketMessage('manual_reveal', { payload: { alignment: "Not a Werewolf" } }));
             manualShowVillageTeamBtn.addEventListener('click', () => sendWebSocketMessage('manual_reveal', { payload: { alignment: "Village Alignment" } }));
