@@ -150,7 +150,7 @@
             <div id="moderatorLog" class="message-log-container p-3 bg-gray-600 rounded-lg text-sm space-y-1"></div>
         </div>
         <div class="mt-6 text-center text-xs text-gray-500">
-            Panel v0.8.2 / Server <span id="serverVersionDisplay">loading...</span>
+            Panel v0.8.3 / Server <span id="serverVersionDisplay">loading...</span>
         </div>
     </div>
 
@@ -281,12 +281,14 @@
             }
 
             function sendWebSocketMessage(type, payload) {
-                if (!currentLoadedGameId && type !== 'system_message_unrelated_to_game') { // Allow some system messages if needed
-                    logToModerator("Cannot send WS message: No game loaded.", "Error");
+                // General messages don't strictly need a gameId if they are global announcements
+                // but for consistency and future filtering, we'll keep sending it if available.
+                if (!currentLoadedGameId && type !== 'moderator_message' && type !== 'system_message_unrelated_to_game') {
+                    logToModerator("Cannot send WS message: No game loaded for type " + type, "Error");
                     return;
                 }
                 if (socket && socket.readyState === WebSocket.OPEN) {
-                    const messageToSend = { type, gameId: currentLoadedGameId, ...payload }; // Always include gameId
+                    const messageToSend = { type, gameId: currentLoadedGameId, ...payload }; 
                     socket.send(JSON.stringify(messageToSend));
                     let logMessageContent = "Unknown action";
                     if (payload.content) logMessageContent = payload.content;
@@ -702,7 +704,7 @@
 
                 if (phaseUpdate) { 
                     logToModerator("Day phase processing complete (server updated).", "Phase");
-                    if (!phaseUpdate.gameWinner || !phaseUpdate.gameWinner.team) {
+                    if (!phaseUpdate.gameWinner || !phaseUpdate.gameWinner.team) { // Only send phase change if game not over
                         const daybreakPayload = {
                             phase: 'day',
                             message: "Daybreak! Open your eyes and discuss.",
@@ -711,6 +713,7 @@
                         };
                         sendWebSocketMessage('game_phase_change', { payload: daybreakPayload });
                     }
+                    // loadSpecificGame will handle UI updates including game over message if gameWinner is set
                     await loadSpecificGame(currentLoadedGameId); 
                 }
             });
@@ -974,7 +977,6 @@
                     } else if (!eliminatedPlayerName && (!result.gameWinner || !result.gameWinner.team)) {
                         sendWebSocketMessage('moderator_message', { gameId: currentLoadedGameId, content: "No one was eliminated by vote. Discussion continues." });
                     }
-                    // Game over message is now handled by server via WS if gameWinner is set in result (checkWinConditions)
                     await loadSpecificGame(currentLoadedGameId); 
                 }
             });
@@ -986,7 +988,7 @@
 
             // Initial setup
             connectWebSocket();
-            fetchServerVersion(); // Fetch and display server version
+            fetchServerVersion(); 
             loadGamesList();
             loadMasterPlayers();
             hideAllGameSpecificSections(); 
