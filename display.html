@@ -1,4 +1,3 @@
-<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -55,7 +54,7 @@
             <div id="status" class="p-3 bg-gray-700 rounded-lg text-sm">Connecting to server...</div>
         </div>
          <div class="mt-6 text-center text-xs text-gray-500">
-            Version v0.8.0
+            Display v0.8.1
         </div>
     </div>
 
@@ -65,7 +64,7 @@
             const statusDiv = document.getElementById('status');
             const displayTitle = document.getElementById('displayTitle');
             let socket;
-            let gameHasEnded = false; // Flag to make game over message sticky
+            let gameHasEnded = false; 
 
             function connect() {
                 const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -75,7 +74,7 @@
                 socket.onopen = () => {
                     statusDiv.textContent = 'Connected to server.';
                     statusDiv.className = 'p-3 bg-green-700 text-green-100 rounded-lg text-sm';
-                    gameHasEnded = false; // Reset on new connection
+                    gameHasEnded = false; 
                 };
 
                 socket.onmessage = function(event) {
@@ -90,13 +89,19 @@
                         return;
                     }
 
-                    // If game has ended, only process 'game_over' or allow reset by new game load (handled by new connection)
-                    if (gameHasEnded && messageData.type !== 'game_over') {
+                    if (gameHasEnded && messageData.type !== 'game_over' && messageData.type !== 'moderator_message' /* Allow general messages even if game ended */) {
+                        // If a new game starts, gameHasEnded will be reset by socket.onopen
+                        // We might want a more explicit "new_game_started" message from server to reset display.
                         console.log("DISPLAY.HTML: Game has ended, ignoring message type: " + messageData.type);
                         return; 
                     }
+                    // If a game_over message is received, ensure we process it even if gameHasEnded was already true (e.g. for refresh)
+                    if (messageData.type === 'game_over') {
+                         gameHasEnded = true; // Make sure it's set
+                    }
 
-                    messageDisplay.innerHTML = ''; // Clear previous content
+
+                    messageDisplay.innerHTML = ''; 
                     const payload = messageData.payload; 
                     const content = messageData.content; 
 
@@ -148,7 +153,11 @@
                         let votingHTML = '<div class="voting-title message-enter">Players on Trial:</div>';
                         let maxVotes = 0;
                         if (payload.votes && Object.keys(payload.votes).length > 0) {
-                            maxVotes = Math.max(...Object.values(payload.votes));
+                            // Ensure all vote values are numbers before using Math.max
+                            const voteValues = Object.values(payload.votes).map(v => Number(v)).filter(v => !isNaN(v));
+                            if (voteValues.length > 0) {
+                                maxVotes = Math.max(...voteValues);
+                            }
                         }
 
                         (payload.playersOnTrial || []).forEach(playerName => {
@@ -168,14 +177,14 @@
                         }
                         messageDisplay.innerHTML = votingHTML;
                     } else if (messageData.type === 'game_over' && payload) {
-                        console.log("DISPLAY.HTML: Received game_over message. Payload:", payload);
+                        console.log("DISPLAY.HTML: Processing game_over message. Payload:", payload);
                         displayTitle.textContent = "GAME OVER!";
                         messageDisplay.innerHTML = `
                             <div class="game-over-message message-enter">GAME OVER!</div>
                             <div class="winning-team-message message-enter">${payload.winningTeam} Wins!</div>
                             <div class="message-enter mt-2 text-lg">${payload.reason || ''}</div>
                         `;
-                        gameHasEnded = true; // Set the flag
+                        gameHasEnded = true; 
                     }
                     else {
                         displayTitle.textContent = "Game Information";
