@@ -13,6 +13,8 @@ const express = require('express');
 const app = express(); 
 app.use(express.json()); 
 
+const SERVER_VERSION = "0.8.1"; // Define server version
+
 // --- In-Memory Data Stores ---
 let masterPlayerList = []; // Array of player objects { id: string, name: string }
 let games = {}; 
@@ -30,13 +32,11 @@ function getPlayerByName(playerName) {
 }
 
 function broadcastToGameClients(gameId, messageObject) {
-    // In a more advanced setup, clients would subscribe to game-specific channels.
-    // For now, we broadcast to all, and client-side display.html filters by gameId if needed.
-    // However, our current display.html doesn't filter by gameId for WS messages, it assumes it's for the "active" game from moderator.
-    // This simple broadcast is fine for a single display screen.
     clients.forEach(client => {
         if (client.readyState === WebSocket.OPEN) {
-            client.send(JSON.stringify(messageObject));
+            // Add gameId to the message if not present, for client-side filtering if needed
+            const messageToSend = { ...messageObject, gameId: messageObject.gameId || gameId };
+            client.send(JSON.stringify(messageToSend));
         }
     });
 }
@@ -47,15 +47,15 @@ function checkWinConditions(game) {
         console.log("Win check skipped for game " + game.gameId + ": No players or game not fully initialized.");
         return null; 
     }
-    if (game.gameWinner && game.gameWinner.team) return game.gameWinner; // Game already decided
+    if (game.gameWinner && game.gameWinner.team) return game.gameWinner; 
 
     const alivePlayersWithRoles = game.playerOrder.filter(name => game.playersInGame[name] && game.playersInGame[name].status === 'alive' && game.playersInGame[name].roleDetails);
     
     if (alivePlayersWithRoles.length === 0 && game.currentPhase !== 'setup' && game.currentPhase !== 'roles_assigned') {
          game.gameWinner = { team: "No One", reason: "All players eliminated." };
          game.currentPhase = 'finished';
-         console.log("Game " + game.gameId + " ended: All players eliminated.");
-         broadcastToGameClients(game.gameId, {type: 'game_over', gameId: game.gameId, payload: game.gameWinner });
+         console.log("SERVER: Game " + game.gameId + " ended: All players eliminated. Broadcasting game_over.");
+         broadcastToGameClients(game.gameId, {type: 'game_over', payload: game.gameWinner });
          return game.gameWinner;
     }
     
@@ -65,22 +65,25 @@ function checkWinConditions(game) {
     if (aliveWerewolves.length === 0 && aliveNonWerewolves.length > 0) { 
         game.gameWinner = { team: "Village", reason: "All werewolves have been eliminated." };
         game.currentPhase = 'finished';
-        console.log("Game " + game.gameId + " ended: Village wins.");
-        broadcastToGameClients(game.gameId, {type: 'game_over', gameId: game.gameId, payload: game.gameWinner });
+        console.log("SERVER: Game " + game.gameId + " ended: Village wins. Broadcasting game_over.");
+        broadcastToGameClients(game.gameId, {type: 'game_over', payload: game.gameWinner });
         return game.gameWinner;
     }
     if (aliveWerewolves.length > 0 && aliveWerewolves.length >= aliveNonWerewolves.length) { 
         game.gameWinner = { team: "Werewolves", reason: "Werewolves have overwhelmed the village." };
         game.currentPhase = 'finished';
-        console.log("Game " + game.gameId + " ended: Werewolves win.");
-        broadcastToGameClients(game.gameId, {type: 'game_over', gameId: game.gameId, payload: game.gameWinner });
+        console.log("SERVER: Game " + game.gameId + " ended: Werewolves win. Broadcasting game_over.");
+        broadcastToGameClients(game.gameId, {type: 'game_over', payload: game.gameWinner });
         return game.gameWinner;
     }
-    return null; // No winner yet
+    return null; 
 }
 
 
 // --- API Endpoints ---
+app.get('/api/version', (req, res) => {
+    res.json({ version: SERVER_VERSION });
+});
 
 app.get('/api/master-players', (req, res) => res.json(masterPlayerList));
 
@@ -133,10 +136,7 @@ app.post('/api/games/:gameId/players', (req, res) => {
     const game = games[req.params.gameId];
     const { players: playerNamesFromClient } = req.body;
     if (!game) return res.status(404).json({ message: 'Game not found.' });
-    if (game.currentPhase !== 'setup' && game.currentPhase !== 'roles_assigned' && Object.keys(game.playersInGame).length > 0 && game.playerOrder.length > 0) {
-        // If game has started (roles assigned and players exist), don't allow easy modification of player list this way
-        // return res.status(400).json({ message: 'Cannot modify player list after game has effectively started with roles. Reset game or manage status.' });
-    }
+    if (game.gameWinner) return res.status(400).json({ message: 'Cannot modify players, game already finished.' });
     if (!Array.isArray(playerNamesFromClient)) return res.status(400).json({ message: 'Invalid player list.' });
 
     const newPlayersInGame = {}; const newPlayerOrder = [];
@@ -188,8 +188,7 @@ app.post('/api/games/:gameId/player-status', (req, res) => {
     game.playersInGame[playerName].status = status;
     console.log('Status for', playerName, 'in', game.gameId, 'to', status);
     
-    checkWinConditions(game); // This will set game.gameWinner and game.currentPhase if game ends
-                              // and also broadcast 'game_over' via WebSocket.
+    checkWinConditions(game); // This will set game.gameWinner and broadcast if game ends
     res.status(200).json(game); 
 });
 
@@ -224,15 +223,15 @@ app.post('/api/games/:gameId/phase', (req, res) => {
             } else {
                 eliminationResult.specialInfo = game.werewolfNightTarget + " was already eliminated.";
             }
-        } else if (game.currentPhase !== 'setup' && game.currentPhase !== 'roles_assigned') { // Avoid "no one eliminated" on first day
+        } else if (game.currentPhase !== 'setup' && game.currentPhase !== 'roles_assigned') { 
             eliminationResult.specialInfo = "No one was eliminated by werewolves.";
         }
         game.werewolfNightTarget = null; 
         game.playersOnTrial = []; game.votes = {}; 
     }
     
-    // The game_over WS message is now sent from within checkWinConditions if the game ends.
-    res.status(200).json(game); // Return the full game state
+    // game_over WS message is sent by checkWinConditions
+    res.status(200).json(game); 
 });
 
 app.post('/api/games/:gameId/action', (req, res) => {
@@ -298,7 +297,7 @@ app.post('/api/games/:gameId/clear-votes', (req, res) => {
     
     game.playersOnTrial.forEach(name => game.votes[name] = 0);
     console.log("Votes cleared for trial in game", game.gameId);
-    res.status(200).json(game); // Return full game state with cleared votes
+    res.status(200).json(game); 
 });
 
 app.post('/api/games/:gameId/process-elimination', (req, res) => {
@@ -320,11 +319,11 @@ app.post('/api/games/:gameId/process-elimination', (req, res) => {
         console.log(actualEliminationMessage);
     }
     
-    game.currentPhase = 'day'; // Always return to day after processing a vote.
+    game.currentPhase = 'day'; 
     game.playersOnTrial = [];
     game.votes = {};
 
-    // Game over WS message is sent by checkWinConditions if applicable
+    // game_over WS message is sent by checkWinConditions if applicable
     res.status(200).json(game); 
 });
 
@@ -367,9 +366,9 @@ wss.on('connection', (ws, req) => {
 
 const port = process.env.PORT || 8080;
 server.listen(port, () => {
-    console.log('HTTP & WS server on port', port);
+    console.log('HTTP & WS server on port', port + ' - Version: ' + SERVER_VERSION);
     console.log('Moderator: http://localhost:' + port + '/');
     console.log('Display: http://localhost:' + port + '/display.html');
 });
-console.log('Initializing server...');
+console.log('Initializing server... Version: ' + SERVER_VERSION);
 // --- End of server.js ---
