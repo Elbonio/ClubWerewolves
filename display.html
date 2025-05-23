@@ -55,7 +55,7 @@
             <div id="status" class="p-3 bg-gray-700 rounded-lg text-sm">Connecting to server...</div>
         </div>
          <div class="mt-6 text-center text-xs text-gray-500">
-            Display v0.8.2
+            Display v0.8.3
         </div>
     </div>
 
@@ -111,15 +111,19 @@
                             <div class="role-description message-enter">${payload.roleDescription}</div>
                             <div class="role-team message-enter">Team: ${payload.team}</div>
                         `;
-                    } else if (messageData.type === 'moderator_message' && content) {
+                    } else if (messageData.type === 'moderator_message') { // Check content inside
                         displayTitle.textContent = "Game Information";
-                        messageDisplay.innerHTML = `<div class="message-enter">${content}</div>`;
+                        if (content) {
+                            messageDisplay.innerHTML = `<div class="message-enter">${content}</div>`;
+                        } else {
+                             messageDisplay.innerHTML = `<div class="message-enter">(Empty general message)</div>`; // Handle if content is missing
+                        }
                     } else if (messageData.type === 'game_phase_change' && payload) {
                         displayTitle.textContent = payload.phase.charAt(0).toUpperCase() + payload.phase.slice(1) + " Phase";
                         let htmlContent = "";
                         
                         if (payload.phase === 'day') {
-                            if (payload.eliminatedPlayer) { // This is for werewolf elimination
+                            if (payload.eliminatedPlayer) { 
                                 htmlContent += `
                                     <div class="elimination-message message-enter">Last night...</div>
                                     <div class="eliminated-player-name message-enter">${payload.eliminatedPlayer} was eliminated.</div>
@@ -140,7 +144,7 @@
                     } else if (messageData.type === 'manual_reveal' && payload) {
                         displayTitle.textContent = "Revelation!";
                         messageDisplay.innerHTML = `<div class="manual-reveal-text message-enter">${payload.alignment}</div>`;
-                    } else if (messageData.type === 'player_eliminated' && payload) { // For manual or vote eliminations
+                    } else if (messageData.type === 'player_eliminated' && payload) { 
                         displayTitle.textContent = "A Player is Out!";
                         let eliminationContext = payload.source === 'manual' ? "The Moderator has announced:" : (payload.source === 'vote' ? "After the vote:" : "An event occurred:");
                         messageDisplay.innerHTML = `
