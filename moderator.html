@@ -150,7 +150,7 @@
             <div id="moderatorLog" class="message-log-container p-3 bg-gray-600 rounded-lg text-sm space-y-1"></div>
         </div>
         <div class="mt-6 text-center text-xs text-gray-500">
-            Panel v0.8.3 / Server <span id="serverVersionDisplay">loading...</span>
+            Panel v0.8.4 / Server <span id="serverVersionDisplay">loading...</span>
         </div>
     </div>
 
@@ -271,7 +271,7 @@
             }
             
             function logToModerator(message, type = "Info") {
-                 console.log('[' + type + '] ' + message); // Also log to browser console for easier debugging
+                 console.log('[' + type + '] ' + message); 
                  const logEntry = document.createElement('div');
                  logEntry.textContent = '[' + type + '] ' + message;
                  logEntry.className = 'text-gray-300';
@@ -283,16 +283,19 @@
 
             function sendWebSocketMessage(type, dataPayload) { 
                 logToModerator('Attempting to send WS message. Type: ' + type + ', Socket Ready: ' + (socket && socket.readyState === WebSocket.OPEN), 'Debug');
+                
+                // Allow moderator_message even if no game is loaded.
                 if (type !== 'moderator_message' && !currentLoadedGameId) {
                     logToModerator("Cannot send WS message: No game loaded for type " + type, "Error");
                     return;
                 }
+
                 if (socket && socket.readyState === WebSocket.OPEN) {
                     const messageToSend = { type, gameId: currentLoadedGameId, ...dataPayload }; 
                     socket.send(JSON.stringify(messageToSend));
                     
                     let logMessageContent = "details unavailable";
-                    if (dataPayload.content !== undefined) { // Check for content specifically
+                    if (dataPayload.content !== undefined) { 
                         logMessageContent = dataPayload.content;
                     } else if (dataPayload.payload) { 
                         const p = dataPayload.payload;
@@ -988,12 +991,11 @@
                 }
             });
             
-            // General Message button
             sendMessageBtn.addEventListener('click', () => {
-                console.log("MODERATOR.HTML: Send Message button clicked.");
-                logToModerator("Send Message button clicked.", "Debug");
+                console.log("MODERATOR.HTML: Send Message button clicked."); // Debug log
+                logToModerator("Send Message button clicked.", "Debug");    // Debug log
                 const message = messageInput.value.trim();
-                logToModerator("Message content: '" + message + "'", "Debug");
+                logToModerator("Message content: '" + message + "'", "Debug"); // Debug log
                 if (message) { 
                     sendWebSocketMessage('moderator_message', { content: message }); 
                     messageInput.value = ''; 
