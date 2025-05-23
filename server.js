@@ -43,12 +43,10 @@ function broadcastToGameClients(gameId, messageObject) {
 
 function checkWinConditions(game) {
     if (!game || !game.playersInGame || Object.keys(game.playersInGame).length === 0 || !game.playerOrder) {
-        // console.log("Win check skipped for game " + game.gameId + ": No players or game not fully initialized.");
         return null; 
     }
     const rolesAssigned = game.playerOrder.some(name => game.playersInGame[name] && game.playersInGame[name].roleDetails);
     if (!rolesAssigned && game.currentPhase !== 'setup' && game.currentPhase !== 'roles_assigned') {
-        // console.log("Win check skipped for game " + game.gameId + ": Roles not assigned yet.");
         return null;
     }
     if (game.gameWinner && game.gameWinner.team) return game.gameWinner; 
@@ -209,7 +207,7 @@ app.post('/api/games/:gameId/phase', (req, res) => {
     }
     
     game.currentPhase = phase;
-    let eliminationResult = { eliminatedPlayerName: null, specialInfo: null };
+    let eliminationResult = { eliminatedPlayerName: null, specialInfo: null }; // Initialize here
 
     if (phase === 'night') {
         game.werewolfNightTarget = null; 
@@ -220,7 +218,7 @@ app.post('/api/games/:gameId/phase', (req, res) => {
         if (game.werewolfNightTarget && game.playersInGame[game.werewolfNightTarget]) {
             if (game.playersInGame[game.werewolfNightTarget].status === 'alive') {
                 game.playersInGame[game.werewolfNightTarget].status = 'eliminated';
-                eliminationResult.eliminatedPlayerName = game.werewolfNightTarget;
+                eliminationResult.eliminatedPlayerName = game.werewolfNightTarget; // Set here
                 game.gameLog.push(game.werewolfNightTarget + " was eliminated by werewolves.");
                 console.log(game.werewolfNightTarget + " eliminated by WW in " + game.gameId);
                 checkWinConditions(game); 
@@ -228,7 +226,7 @@ app.post('/api/games/:gameId/phase', (req, res) => {
                 eliminationResult.specialInfo = game.werewolfNightTarget + " was already eliminated.";
                  console.log(game.werewolfNightTarget + " was already targeted but is eliminated in game " + game.gameId);
             }
-        } else if (game.currentPhase !== 'setup' && game.currentPhase !== 'roles_assigned' && game.playerOrder.length > 0) { // Only say "no one eliminated" if game has started
+        } else if (game.playerOrder && game.playerOrder.length > 0 && Object.values(game.playersInGame).some(p => p.roleName)) { // Only if game has started
             eliminationResult.specialInfo = "No one was eliminated by werewolves.";
             console.log("No werewolf elimination in game " + game.gameId);
         }
@@ -236,9 +234,9 @@ app.post('/api/games/:gameId/phase', (req, res) => {
         game.playersOnTrial = []; game.votes = {}; 
     }
     
-    // The game_over WS message is now sent from within checkWinConditions if the game ends.
-    // The API response still contains the full game state, including gameWinner.
-    res.status(200).json(game); 
+    // The game_over WS message is sent by checkWinConditions.
+    // The API response includes the full game state which now has eliminationResult correctly.
+    res.status(200).json({ ...game, eliminationResult }); // Ensure eliminationResult is part of the response
 });
 
 app.post('/api/games/:gameId/action', (req, res) => {
