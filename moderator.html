@@ -271,6 +271,7 @@
             }
             
             function logToModerator(message, type = "Info") {
+                 console.log('[' + type + '] ' + message); // Also log to browser console for easier debugging
                  const logEntry = document.createElement('div');
                  logEntry.textContent = '[' + type + '] ' + message;
                  logEntry.className = 'text-gray-300';
@@ -280,8 +281,8 @@
                  }
             }
 
-            function sendWebSocketMessage(type, dataPayload) { // Renamed 'payload' to 'dataPayload' for clarity
-                // General messages can be sent even without a game loaded.
+            function sendWebSocketMessage(type, dataPayload) { 
+                logToModerator('Attempting to send WS message. Type: ' + type + ', Socket Ready: ' + (socket && socket.readyState === WebSocket.OPEN), 'Debug');
                 if (type !== 'moderator_message' && !currentLoadedGameId) {
                     logToModerator("Cannot send WS message: No game loaded for type " + type, "Error");
                     return;
@@ -291,17 +292,18 @@
                     socket.send(JSON.stringify(messageToSend));
                     
                     let logMessageContent = "details unavailable";
-                    if (dataPayload.content) { // For general messages like { content: "..." }
+                    if (dataPayload.content !== undefined) { // Check for content specifically
                         logMessageContent = dataPayload.content;
-                    } else if (dataPayload.payload) { // For messages with a nested payload object
+                    } else if (dataPayload.payload) { 
                         const p = dataPayload.payload;
                         logMessageContent = p.playerName || p.targetPlayerName || p.alignment || p.message || p.winningTeam || JSON.stringify(p);
                     } else {
-                        logMessageContent = JSON.stringify(dataPayload); // Fallback
+                        logMessageContent = JSON.stringify(dataPayload); 
                     }
                     logToModerator(type + ': ' + logMessageContent, 'WS Sent');
                 } else {
                     updateStatus('Not connected to WS. Cannot send message.', 'error');
+                    logToModerator('WS send failed: Socket not open or undefined.', 'Error');
                 }
             }
 
@@ -709,7 +711,7 @@
                 });
 
                 if (phaseUpdate) { 
-                    logToModerator("Day phase processing complete (server updated).", "Phase");
+                    logToModerator("Day phase processing complete (server updated). Elim Result: " + JSON.stringify(phaseUpdate.eliminationResult), "Phase");
                     if (!phaseUpdate.gameWinner || !phaseUpdate.gameWinner.team) { 
                         const daybreakPayload = {
                             phase: 'day',
@@ -984,6 +986,25 @@
                     }
                     await loadSpecificGame(currentLoadedGameId); 
                 }
+            });
+            
+            // General Message button
+            sendMessageBtn.addEventListener('click', () => {
+                console.log("MODERATOR.HTML: Send Message button clicked.");
+                logToModerator("Send Message button clicked.", "Debug");
+                const message = messageInput.value.trim();
+                logToModerator("Message content: '" + message + "'", "Debug");
+                if (message) { 
+                    sendWebSocketMessage('moderator_message', { content: message }); 
+                    messageInput.value = ''; 
+                } else {
+                    logToModerator("Cannot send an empty message (message was: '" + message + "').", "Warning"); 
+                }
+            });
+            messageInput.addEventListener('keypress', (e) => {
+                 if (e.key === 'Enter') {
+                    sendMessageBtn.click(); 
+                 }
             });
             
             manualShowIsWerewolfBtn.addEventListener('click', () => sendWebSocketMessage('manual_reveal', { payload: { alignment: "Is a Werewolf" } }));
