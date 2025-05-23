@@ -280,19 +280,25 @@
                  }
             }
 
-            function sendWebSocketMessage(type, payload) {
-                // General messages don't strictly need a gameId if they are global announcements
-                // but for consistency and future filtering, we'll keep sending it if available.
-                if (!currentLoadedGameId && type !== 'moderator_message' && type !== 'system_message_unrelated_to_game') {
+            function sendWebSocketMessage(type, dataPayload) { // Renamed 'payload' to 'dataPayload' for clarity
+                // General messages can be sent even without a game loaded.
+                if (type !== 'moderator_message' && !currentLoadedGameId) {
                     logToModerator("Cannot send WS message: No game loaded for type " + type, "Error");
                     return;
                 }
                 if (socket && socket.readyState === WebSocket.OPEN) {
-                    const messageToSend = { type, gameId: currentLoadedGameId, ...payload }; 
+                    const messageToSend = { type, gameId: currentLoadedGameId, ...dataPayload }; 
                     socket.send(JSON.stringify(messageToSend));
-                    let logMessageContent = "Unknown action";
-                    if (payload.content) logMessageContent = payload.content;
-                    else if (payload.payload) logMessageContent = payload.payload.playerName || payload.payload.targetPlayerName || payload.payload.alignment || payload.payload.message || payload.payload.winningTeam || JSON.stringify(payload.payload);
+                    
+                    let logMessageContent = "details unavailable";
+                    if (dataPayload.content) { // For general messages like { content: "..." }
+                        logMessageContent = dataPayload.content;
+                    } else if (dataPayload.payload) { // For messages with a nested payload object
+                        const p = dataPayload.payload;
+                        logMessageContent = p.playerName || p.targetPlayerName || p.alignment || p.message || p.winningTeam || JSON.stringify(p);
+                    } else {
+                        logMessageContent = JSON.stringify(dataPayload); // Fallback
+                    }
                     logToModerator(type + ': ' + logMessageContent, 'WS Sent');
                 } else {
                     updateStatus('Not connected to WS. Cannot send message.', 'error');
@@ -704,7 +710,7 @@
 
                 if (phaseUpdate) { 
                     logToModerator("Day phase processing complete (server updated).", "Phase");
-                    if (!phaseUpdate.gameWinner || !phaseUpdate.gameWinner.team) { // Only send phase change if game not over
+                    if (!phaseUpdate.gameWinner || !phaseUpdate.gameWinner.team) { 
                         const daybreakPayload = {
                             phase: 'day',
                             message: "Daybreak! Open your eyes and discuss.",
@@ -713,7 +719,6 @@
                         };
                         sendWebSocketMessage('game_phase_change', { payload: daybreakPayload });
                     }
-                    // loadSpecificGame will handle UI updates including game over message if gameWinner is set
                     await loadSpecificGame(currentLoadedGameId); 
                 }
             });
