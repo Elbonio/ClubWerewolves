@@ -150,7 +150,7 @@
             <div id="moderatorLog" class="message-log-container p-3 bg-gray-600 rounded-lg text-sm space-y-1"></div>
         </div>
         <div class="mt-6 text-center text-xs text-gray-500">
-            Panel v0.8.5 / Server <span id="serverVersionDisplay">loading...</span>
+            Panel v0.9.0 / Server <span id="serverVersionDisplay">loading...</span>
         </div>
     </div>
 
@@ -284,7 +284,6 @@
             function sendWebSocketMessage(type, dataPayload) { 
                 logToModerator('Attempting to send WS message. Type: ' + type + ', Socket Ready: ' + (socket && socket.readyState === WebSocket.OPEN), 'Debug');
                 
-                // Allow moderator_message even if no game is loaded.
                 if (type !== 'moderator_message' && !currentLoadedGameId) {
                     logToModerator("Cannot send WS message: No game loaded for type " + type, "Error");
                     return;
@@ -982,15 +981,10 @@
 
                 if (result) {
                     logToModerator("Vote processed. Eliminated: " + (eliminatedPlayerName || "None"), "Voting");
-                    // Server will broadcast game_over if applicable via checkWinConditions.
-                    // If game is not over, and someone was eliminated, send player_eliminated.
-                    // If game is not over, and no one was eliminated, send moderator_message.
-                    if (!result.gameWinner || !result.gameWinner.team) {
-                        if (eliminatedPlayerName) {
-                            sendWebSocketMessage('player_eliminated', { payload: { gameId: currentLoadedGameId, playerName: eliminatedPlayerName, source: 'vote' } });
-                        } else {
-                             sendWebSocketMessage('moderator_message', { gameId: currentLoadedGameId, content: "No one was eliminated by vote. Discussion continues." });
-                        }
+                    if (eliminatedPlayerName && (!result.gameWinner || !result.gameWinner.team) ) { 
+                        sendWebSocketMessage('player_eliminated', { payload: { gameId: currentLoadedGameId, playerName: eliminatedPlayerName, source: 'vote' } });
+                    } else if (!eliminatedPlayerName && (!result.gameWinner || !result.gameWinner.team)) {
+                        sendWebSocketMessage('moderator_message', { gameId: currentLoadedGameId, content: "No one was eliminated by vote. Discussion continues." });
                     }
                     await loadSpecificGame(currentLoadedGameId); 
                 }
@@ -998,10 +992,9 @@
             
             // General Message button
             sendMessageBtn.addEventListener('click', () => {
-                console.log("MODERATOR.HTML: Send Message button clicked."); 
-                logToModerator("Send Message button clicked.", "Debug");    
+                logToModerator("Send Message button clicked.", "Debug");
                 const message = messageInput.value.trim();
-                logToModerator("Message content: '" + message + "'", "Debug"); 
+                logToModerator("Message content: '" + message + "'", "Debug");
                 if (message) { 
                     try {
                         sendWebSocketMessage('moderator_message', { content: message }); 
