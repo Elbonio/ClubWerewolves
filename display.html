@@ -55,7 +55,7 @@
             <div id="status" class="p-3 bg-gray-700 rounded-lg text-sm">Connecting to server...</div>
         </div>
          <div class="mt-6 text-center text-xs text-gray-500">
-            Display v0.9.1
+            Display v0.9.2
         </div>
     </div>
 
@@ -90,7 +90,6 @@
                         return;
                     }
 
-                    // If game has ended, only process 'game_over' or general 'moderator_message'
                     if (gameHasEnded && messageData.type !== 'game_over' && messageData.type !== 'moderator_message') {
                         console.log("DISPLAY.HTML: Game has ended, ignoring message type: " + messageData.type);
                         return; 

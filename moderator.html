@@ -150,7 +150,7 @@
             <div id="moderatorLog" class="message-log-container p-3 bg-gray-600 rounded-lg text-sm space-y-1"></div>
         </div>
         <div class="mt-6 text-center text-xs text-gray-500">
-            Panel v0.9.1 / Server <span id="serverVersionDisplay">loading...</span>
+            Panel v0.9.2 / Server <span id="serverVersionDisplay">loading...</span>
         </div>
     </div>
 
@@ -160,8 +160,8 @@
         let localMasterPlayers = []; 
         let localGameList = [];      
         
-        let playersInCurrentGame = []; // Now an array of player names, fetched from game.playerOrder
-        let gameRoles = {};            // Populated from game.playersInGame (server object)
+        let playersInCurrentGame = []; 
+        let gameRoles = {};            
         let currentPhase = 'setup';    
         let playersOnTrialForVote = [];
         let currentVotes = {};
@@ -286,8 +286,17 @@
                 
                 if (type !== 'moderator_message' && !currentLoadedGameId) {
                     logToModerator("Cannot send WS message: No game loaded for type " + type, "Error");
-                    return;
+                    // For general messages, currentLoadedGameId might be null, which is fine.
+                    // The server.js WS handler doesn't strictly require gameId for 'moderator_message' to broadcast.
+                    // However, it's good practice to include it if a game context *is* active.
+                    if (type === 'moderator_message' && !currentLoadedGameId) {
+                        // Allow sending general messages even if no game is loaded.
+                        // The gameId in messageToSend will be null.
+                    } else if (!currentLoadedGameId) {
+                        return; // Don't send other types of messages without a gameId
+                    }
                 }
+
 
                 if (socket && socket.readyState === WebSocket.OPEN) {
                     const messageToSend = { type, gameId: currentLoadedGameId, ...dataPayload }; 
@@ -990,7 +999,7 @@
                 }
             });
             
-            // General Message button
+            // General Message button - Fixed
             sendMessageBtn.addEventListener('click', () => {
                 logToModerator("Send Message button clicked.", "Debug");
                 const message = messageInput.value.trim();
