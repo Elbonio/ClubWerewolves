@@ -2,22 +2,85 @@
 // To run this:
 // 1. Make sure you have Node.js installed.
 // 2. Install `express` and `ws`: npm install express ws
-// 3. Save this code as server.js and run from your terminal: node server.js
+// 3. Install `mysql2`: npm install mysql2
+// 4. Set up your MariaDB/MySQL database and environment variables.
+// 5. Create the `master_players` table using the SQL in the comments below.
+// 6. Save this code as server.js and run from your terminal: node server.js
 
 const WebSocket = require('ws');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const express = require('express'); 
+const mysql = require('mysql2/promise'); // Using the promise-based API
 
 const app = express(); 
 app.use(express.json()); 
 
-const SERVER_VERSION = "0.8.4"; // Updated server version
+const SERVER_VERSION = "0.9.0"; 
 
-// --- In-Memory Data Stores ---
-let masterPlayerList = []; // Array of player objects { id: string, name: string }
-let games = {}; 
+// --- Database Connection Pool ---
+let pool;
+try {
+    pool = mysql.createPool({
+        host: process.env.MYSQL_HOST,
+        port: process.env.MYSQL_PORT || 3306,
+        user: process.env.MYSQL_USER,
+        password: process.env.MYSQL_PASSWORD,
+        database: process.env.MYSQL_DATABASE,
+        waitForConnections: true,
+        connectionLimit: 10,
+        queueLimit: 0
+    });
+    console.log("Successfully created MariaDB connection pool.");
+
+    // Test connection
+    pool.getConnection()
+        .then(connection => {
+            console.log("Successfully connected to MariaDB!");
+            connection.release();
+        })
+        .catch(err => {
+            console.error("Error connecting to MariaDB:", err);
+            // process.exit(1); // Optionally exit if DB connection fails critically
+        });
+
+} catch (error) {
+    console.error("Failed to create MariaDB connection pool:", error);
+    // process.exit(1); // Exit if pool creation fails
+}
+
+
+/*
+SQL to create the master_players table (run this in phpMyAdmin or similar tool):
+
+CREATE TABLE master_players (
+    id VARCHAR(255) PRIMARY KEY,
+    name VARCHAR(255) NOT NULL UNIQUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+Basic placeholder for games table (more detail needed for full game state persistence):
+CREATE TABLE games (
+   game_id VARCHAR(255) PRIMARY KEY,
+   game_name VARCHAR(255) NOT NULL,
+   current_phase VARCHAR(50) DEFAULT 'setup',
+   game_winner_team VARCHAR(50),
+   game_winner_reason TEXT,
+   -- For complex nested data like playersInGame, roles, votes, etc.,
+   -- you'll likely need additional related tables (e.g., game_players, game_votes)
+   -- OR use JSON columns if your MariaDB version supports them well and you prefer that.
+   -- For now, playersInGame, playerOrder etc. are still in-memory for the `games` object.
+   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+*/
+
+
+// --- In-Memory Data Stores (Games data is still in-memory for now) ---
+// let masterPlayerList = []; // This is now in the database
+let games = {}; // Game state will be migrated to DB in future steps
 
 const ALL_ROLES_SERVER = {
     VILLAGER: { name: "Villager", description: "Find and eliminate the werewolves.", team: "Good", alignment: "Village" },
@@ -26,9 +89,15 @@ const ALL_ROLES_SERVER = {
 };
 
 // --- Helper Functions ---
-function getPlayerByName(playerName) {
-    if (!playerName) return null;
-    return masterPlayerList.find(p => p.name.toLowerCase() === playerName.toLowerCase());
+async function getMasterPlayerByNameDB(playerName) {
+    if (!playerName || !pool) return null;
+    try {
+        const [rows] = await pool.execute('SELECT * FROM master_players WHERE LOWER(name) = LOWER(?)', [playerName.trim()]);
+        return rows[0] || null;
+    } catch (error) {
+        console.error("Error fetching player by name from DB:", error);
+        return null;
+    }
 }
 
 function broadcastToGameClients(gameId, messageObject) {
@@ -88,17 +157,41 @@ app.get('/api/version', (req, res) => {
     res.json({ version: SERVER_VERSION });
 });
 
-app.get('/api/master-players', (req, res) => res.json(masterPlayerList));
+app.get('/api/master-players', async (req, res) => {
+    if (!pool) return res.status(500).json({ message: "Database not configured." });
+    try {
+        const [rows] = await pool.query('SELECT id, name FROM master_players ORDER BY name ASC');
+        res.json(rows);
+    } catch (error) {
+        console.error("Error fetching master players from DB:", error);
+        res.status(500).json({ message: "Failed to fetch master players." });
+    }
+});
 
-app.post('/api/master-players', (req, res) => {
+app.post('/api/master-players', async (req, res) => {
+    if (!pool) return res.status(500).json({ message: "Database not configured." });
     const { name } = req.body;
     if (!name || typeof name !== 'string' || name.trim() === '') return res.status(400).json({ message: 'Player name is required.' });
+    
     const trimmedName = name.trim();
-    if (masterPlayerList.find(p => p.name.toLowerCase() === trimmedName.toLowerCase())) return res.status(409).json({ message: 'Player already exists.' });
-    const newPlayer = { id: 'player_' + Date.now(), name: trimmedName };
-    masterPlayerList.push(newPlayer);
-    console.log('Added to master list:', newPlayer);
-    res.status(201).json(newPlayer);
+    try {
+        const existingPlayer = await getMasterPlayerByNameDB(trimmedName);
+        if (existingPlayer) {
+            return res.status(409).json({ message: 'Player already exists in master list.' });
+        }
+        const newPlayerId = 'player_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+        await pool.execute('INSERT INTO master_players (id, name) VALUES (?, ?)', [newPlayerId, trimmedName]);
+        
+        const newPlayer = { id: newPlayerId, name: trimmedName }; // Construct object to return
+        console.log('Added to master player list (DB):', newPlayer);
+        res.status(201).json(newPlayer);
+    } catch (error) {
+        console.error("Error adding player to DB:", error);
+        if (error.code === 'ER_DUP_ENTRY') { // Catch unique constraint violation specifically
+             return res.status(409).json({ message: 'Player already exists in master list (DB constraint).' });
+        }
+        res.status(500).json({ message: "Failed to add player to master list." });
+    }
 });
 
 app.get('/api/games', (req, res) => {
@@ -120,7 +213,7 @@ app.post('/api/games', (req, res) => {
         playersInGame: {}, playerOrder: [], currentPhase: 'setup', gameLog: [],
         seerPlayerName: null, werewolfNightTarget: null, playersOnTrial: [], votes: {}, gameWinner: null
     };
-    console.log('New game:', games[newGameId].gameName);
+    console.log('New game (in-memory):', games[newGameId].gameName);
     res.status(201).json({ gameId: newGameId, gameName: games[newGameId].gameName });
 });
 
@@ -135,7 +228,7 @@ app.get('/api/games/:gameId', (req, res) => {
     } else res.status(404).json({ message: 'Game not found.' });
 });
 
-app.post('/api/games/:gameId/players', (req, res) => {
+app.post('/api/games/:gameId/players', async (req, res) => { // Made async for potential DB ops later
     const game = games[req.params.gameId];
     const { players: playerNamesFromClient } = req.body;
     if (!game) return res.status(404).json({ message: 'Game not found.' });
@@ -143,13 +236,13 @@ app.post('/api/games/:gameId/players', (req, res) => {
     if (!Array.isArray(playerNamesFromClient)) return res.status(400).json({ message: 'Invalid player list.' });
 
     const newPlayersInGame = {}; const newPlayerOrder = [];
-    playerNamesFromClient.forEach(name => {
-        const masterPlayer = getPlayerByName(name);
+    for (const name of playerNamesFromClient) { // Use for...of for async/await if needed inside loop later
+        const masterPlayer = await getMasterPlayerByNameDB(name); // Use DB helper
         if (masterPlayer) {
             newPlayersInGame[name] = game.playersInGame[name] || { id: masterPlayer.id, roleName: null, roleDetails: null, status: 'alive' };
             newPlayerOrder.push(name);
         }
-    });
+    }
     game.playersInGame = newPlayersInGame; game.playerOrder = newPlayerOrder;
     if (game.seerPlayerName && !game.playersInGame[game.seerPlayerName]) game.seerPlayerName = null;
     if (game.werewolfNightTarget && !game.playersInGame[game.werewolfNightTarget]) game.werewolfNightTarget = null;
@@ -157,7 +250,7 @@ app.post('/api/games/:gameId/players', (req, res) => {
     res.status(200).json(game); 
 });
 
-app.post('/api/games/:gameId/assign-roles', (req, res) => {
+app.post('/api/games/:gameId/assign-roles', async (req, res) => { // Made async
     const game = games[req.params.gameId];
     if (!game || !game.playerOrder || game.playerOrder.length === 0) return res.status(400).json({ message: 'No players.' });
     if (game.gameWinner) return res.status(400).json({ message: 'Game already finished.' });
@@ -170,12 +263,12 @@ app.post('/api/games/:gameId/assign-roles', (req, res) => {
     for (let i = rolesToAssign.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [rolesToAssign[i], rolesToAssign[j]] = [rolesToAssign[j], rolesToAssign[i]]; }
     
     const newPlayersInGameData = {};
-    game.playerOrder.forEach((playerName, index) => {
+    for (const [index, playerName] of game.playerOrder.entries()) { // Use for...of for async
         const assignedRoleDetails = rolesToAssign[index];
-        const masterPlayer = getPlayerByName(playerName);
+        const masterPlayer = await getMasterPlayerByNameDB(playerName); // Use DB helper
         newPlayersInGameData[playerName] = { id: masterPlayer ? masterPlayer.id : 'uid_' + playerName, roleName: assignedRoleDetails.name, roleDetails: assignedRoleDetails, status: 'alive' };
         if (assignedRoleDetails.name === "Seer") game.seerPlayerName = playerName;
-    });
+    }
     game.playersInGame = newPlayersInGameData; game.currentPhase = 'roles_assigned'; game.werewolfNightTarget = null;
     console.log('Roles assigned for', game.gameId);
     res.status(200).json(game);
@@ -201,10 +294,7 @@ app.post('/api/games/:gameId/phase', (req, res) => {
     if (!game) return res.status(404).json({ message: "Game not found" });
     if (!phase) return res.status(400).json({ message: "Phase is required" });
     
-    if (game.gameWinner && game.gameWinner.team) {
-        console.log("Game " + game.gameId + " is already finished. Sending current state.");
-        return res.status(200).json(game); // Send current (finished) game state
-    }
+    if (game.gameWinner) return res.status(400).json({ message: "Game is already finished."});
 
     if (phase !== 'setup' && game.currentPhase === 'setup' && !Object.values(game.playersInGame).some(p => p.roleName)) {
          return res.status(400).json({ message: "Cannot start phase. Roles not assigned yet."});
@@ -244,8 +334,6 @@ app.post('/api/games/:gameId/phase', (req, res) => {
         game.playersOnTrial = []; game.votes = {}; 
     }
     
-    // The game_over WS message is sent by checkWinConditions if applicable.
-    // Add eliminationResult to the game object so it's part of the response.
     game.eliminationResult = eliminationResult; 
     res.status(200).json(game); 
 });
@@ -341,7 +429,6 @@ app.post('/api/games/:gameId/process-elimination', (req, res) => {
     game.playersOnTrial = [];
     game.votes = {};
 
-    // Add elimination message to the response for the moderator panel to use if game not over
     const gameResponse = {...game, eliminationOutcome: actualEliminationMessage };
     res.status(200).json(gameResponse); 
 });

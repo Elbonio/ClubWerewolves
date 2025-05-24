@@ -55,7 +55,7 @@
             <div id="status" class="p-3 bg-gray-700 rounded-lg text-sm">Connecting to server...</div>
         </div>
          <div class="mt-6 text-center text-xs text-gray-500">
-            Display v0.8.3
+            Display v0.9.0
         </div>
     </div>
 
@@ -111,12 +111,14 @@
                             <div class="role-description message-enter">${payload.roleDescription}</div>
                             <div class="role-team message-enter">Team: ${payload.team}</div>
                         `;
-                    } else if (messageData.type === 'moderator_message') { // Check content inside
+                    } else if (messageData.type === 'moderator_message') { 
                         displayTitle.textContent = "Game Information";
-                        if (content) {
+                        if (content !== undefined) { 
                             messageDisplay.innerHTML = `<div class="message-enter">${content}</div>`;
+                             console.log("DISPLAY.HTML: Displaying moderator_message content: " + content);
                         } else {
-                             messageDisplay.innerHTML = `<div class="message-enter">(Empty general message)</div>`; // Handle if content is missing
+                             messageDisplay.innerHTML = `<div class="message-enter">(Empty general message)</div>`; 
+                             console.log("DISPLAY.HTML: Moderator_message received but content is undefined.");
                         }
                     } else if (messageData.type === 'game_phase_change' && payload) {
                         displayTitle.textContent = payload.phase.charAt(0).toUpperCase() + payload.phase.slice(1) + " Phase";
