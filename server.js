@@ -13,7 +13,7 @@ const express = require('express');
 const app = express(); 
 app.use(express.json()); 
 
-const SERVER_VERSION = "0.8.3"; // Server version
+const SERVER_VERSION = "0.8.4"; // Updated server version
 
 // --- In-Memory Data Stores ---
 let masterPlayerList = []; // Array of player objects { id: string, name: string }
@@ -35,8 +35,6 @@ function broadcastToGameClients(gameId, messageObject) {
     console.log("SERVER: Broadcasting to WS clients:", JSON.stringify(messageObject));
     clients.forEach(client => {
         if (client.readyState === WebSocket.OPEN) {
-            // Add gameId to the message if not present, for client-side filtering if needed
-            // However, our current display.html doesn't filter by gameId for WS messages
             const messageToSend = { ...messageObject, gameId: messageObject.gameId || gameId };
             client.send(JSON.stringify(messageToSend));
         }
@@ -52,7 +50,7 @@ function checkWinConditions(game) {
     if (!rolesAssigned && game.currentPhase !== 'setup' && game.currentPhase !== 'roles_assigned') {
         return null;
     }
-    if (game.gameWinner && game.gameWinner.team) return game.gameWinner; // Game already decided
+    if (game.gameWinner && game.gameWinner.team) return game.gameWinner; 
 
     const alivePlayersWithRoles = game.playerOrder.filter(name => game.playersInGame[name] && game.playersInGame[name].status === 'alive' && game.playersInGame[name].roleDetails);
     
@@ -203,7 +201,10 @@ app.post('/api/games/:gameId/phase', (req, res) => {
     if (!game) return res.status(404).json({ message: "Game not found" });
     if (!phase) return res.status(400).json({ message: "Phase is required" });
     
-    if (game.gameWinner) return res.status(400).json({ message: "Game is already finished."});
+    if (game.gameWinner && game.gameWinner.team) {
+        console.log("Game " + game.gameId + " is already finished. Sending current state.");
+        return res.status(200).json(game); // Send current (finished) game state
+    }
 
     if (phase !== 'setup' && game.currentPhase === 'setup' && !Object.values(game.playersInGame).some(p => p.roleName)) {
          return res.status(400).json({ message: "Cannot start phase. Roles not assigned yet."});
@@ -231,13 +232,10 @@ app.post('/api/games/:gameId/phase', (req, res) => {
                  console.log(game.werewolfNightTarget + " was already targeted but is eliminated in game " + game.gameId);
             }
         } else if (previousPhase === 'night') { 
-            // Only set "no one eliminated" if it was actually night and no valid target was processed
-            // Avoids this message on first day or if day is started from a non-night phase
             eliminationResult.specialInfo = "No one was eliminated by werewolves.";
             console.log("No werewolf elimination in game " + game.gameId + " (target: " + game.werewolfNightTarget + ")");
         }
         
-        // Always check win conditions when transitioning to day if not already done by WW kill check.
         if (!game.gameWinner) { 
              checkWinConditions(game);
         }
@@ -246,9 +244,10 @@ app.post('/api/games/:gameId/phase', (req, res) => {
         game.playersOnTrial = []; game.votes = {}; 
     }
     
-    // Pass eliminationResult and gameWinner in the game object itself for the client to use
-    const gameResponse = { ...game, eliminationResult: eliminationResult };
-    res.status(200).json(gameResponse); 
+    // The game_over WS message is sent by checkWinConditions if applicable.
+    // Add eliminationResult to the game object so it's part of the response.
+    game.eliminationResult = eliminationResult; 
+    res.status(200).json(game); 
 });
 
 app.post('/api/games/:gameId/action', (req, res) => {
@@ -326,7 +325,7 @@ app.post('/api/games/:gameId/process-elimination', (req, res) => {
     if (game.gameWinner) return res.status(400).json({ message: "Game is already finished."});
     if (game.currentPhase !== 'voting') return res.status(400).json({ message: "Can only process from voting phase." });
 
-    let actualEliminationMessage = "No one was eliminated by vote."; // Will be part of game.gameLog
+    let actualEliminationMessage = "No one was eliminated by vote."; 
     if (eliminatedPlayerName && game.playersInGame[eliminatedPlayerName] && game.playersInGame[eliminatedPlayerName].status === 'alive') {
         game.playersInGame[eliminatedPlayerName].status = 'eliminated';
         actualEliminationMessage = eliminatedPlayerName + " was eliminated by vote.";
@@ -342,9 +341,9 @@ app.post('/api/games/:gameId/process-elimination', (req, res) => {
     game.playersOnTrial = [];
     game.votes = {};
 
-    // game_over WS message is sent by checkWinConditions if applicable.
-    // The HTTP response includes the full game state which the client will use to reload.
-    res.status(200).json(game); 
+    // Add elimination message to the response for the moderator panel to use if game not over
+    const gameResponse = {...game, eliminationOutcome: actualEliminationMessage };
+    res.status(200).json(gameResponse); 
 });
 
 
@@ -366,7 +365,7 @@ wss.on('connection', (ws, req) => {
     console.log('WS Client connected:', clientIp, 'Total:', clients.size);
     ws.on('message', (message) => {
         const messageString = message.toString();
-        // console.log('WS Received:', messageString); // Can be very verbose
+        // console.log('WS Received:', messageString); 
         let parsedMessage;
         try { parsedMessage = JSON.parse(messageString); } 
         catch (e) { console.warn('WS non-JSON msg:', messageString); return; }
