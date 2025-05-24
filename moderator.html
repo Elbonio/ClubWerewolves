@@ -59,7 +59,7 @@
         <div id="currentGameSpecificsSection" class="hidden">
             <div id="currentGameSetupSection" class="mb-8 p-6 bg-gray-700 rounded-lg">
                 <h2 class="text-2xl font-semibold mb-4 text-purple-300">Current Game: Player Setup</h2>
-                <p class="text-gray-400 mb-2">Select players from the master list for the current game. Changes are saved automatically.</p>
+                <p class="text-gray-400 mb-2">Select players from the master list for the current game. Changes are saved to the server.</p>
                 <div id="masterPlayerSelectionForGame" class="mb-4 max-h-48 overflow-y-auto bg-gray-600 p-2 rounded-md"></div>
                  <div class="mb-4">
                     <h3 class="text-lg font-medium text-gray-300 mb-2">Players in Current Game:</h3>
@@ -150,7 +150,7 @@
             <div id="moderatorLog" class="message-log-container p-3 bg-gray-600 rounded-lg text-sm space-y-1"></div>
         </div>
         <div class="mt-6 text-center text-xs text-gray-500">
-            Panel v0.9.0 / Server <span id="serverVersionDisplay">loading...</span>
+            Panel v0.9.1 / Server <span id="serverVersionDisplay">loading...</span>
         </div>
     </div>
 
@@ -160,8 +160,8 @@
         let localMasterPlayers = []; 
         let localGameList = [];      
         
-        let playersInCurrentGame = []; 
-        let gameRoles = {};            
+        let playersInCurrentGame = []; // Now an array of player names, fetched from game.playerOrder
+        let gameRoles = {};            // Populated from game.playersInGame (server object)
         let currentPhase = 'setup';    
         let playersOnTrialForVote = [];
         let currentVotes = {};
@@ -990,7 +990,7 @@
                 }
             });
             
-            // General Message button - Fixed
+            // General Message button
             sendMessageBtn.addEventListener('click', () => {
                 logToModerator("Send Message button clicked.", "Debug");
                 const message = messageInput.value.trim();
