@@ -181,7 +181,7 @@
                         }
                         messageDisplay.innerHTML = votingHTML;
                     } else if (messageData.type === 'game_over' && payload) {
-                        console.log("DISPLAY.HTML: Processing game_over message. Payload:", payload);
+                        console.log("DISPLAY.HTML: Processing game_over message. Payload:", payload); // Ensure this log exists
                         displayTitle.textContent = "GAME OVER!";
                         messageDisplay.innerHTML = `
                             <div class="game-over-message message-enter">GAME OVER!</div>

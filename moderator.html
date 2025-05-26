@@ -150,7 +150,7 @@
             <div id="moderatorLog" class="message-log-container p-3 bg-gray-600 rounded-lg text-sm space-y-1"></div>
         </div>
         <div class="mt-6 text-center text-xs text-gray-500">
-            Panel v0.9.3 / Server <span id="serverVersionDisplay">loading...</span>
+            Panel v0.9.4 / Server <span id="serverVersionDisplay">loading...</span>
         </div>
     </div>
 
@@ -160,6 +160,7 @@
         let localMasterPlayers = []; 
         let localGameList = [];      
         
+        // These will be primarily driven by server state after loading a game
         let playersInCurrentGame = []; 
         let gameRoles = {};            
         let currentPhase = 'setup';    
@@ -284,14 +285,18 @@
             function sendWebSocketMessage(type, dataPayload) { 
                 logToModerator('Attempting to send WS message. Type: ' + type + ', Socket Ready: ' + (socket && socket.readyState === WebSocket.OPEN), 'Debug');
                 
-                // Allow moderator_message even if no game is loaded.
                 if (type !== 'moderator_message' && !currentLoadedGameId) {
-                    logToModerator("Cannot send WS message: No game loaded for type " + type, "Error");
-                    return; // Only return if not a moderator_message and no game loaded
+                     // Allow moderator_message even if no game is loaded.
+                     // For other types, ensure a game is loaded.
+                     if (type === 'moderator_message') {
+                         // Proceed to send, gameId might be null but that's handled by server/display if needed.
+                     } else {
+                        logToModerator("Cannot send WS message: No game loaded for type " + type, "Error");
+                        return;
+                     }
                 }
 
                 if (socket && socket.readyState === WebSocket.OPEN) {
-                    // Include gameId for all messages if a game is loaded, otherwise it will be null (which is fine for general messages)
                     const messageToSend = { type, gameId: currentLoadedGameId, ...dataPayload }; 
                     socket.send(JSON.stringify(messageToSend));
                     
@@ -699,6 +704,7 @@
                 });
                 if (phaseUpdate) {
                     logToModerator("Night phase started (server updated).", "Phase");
+                    // Only send phase change WS if game is not over (server now includes gameWinner in response)
                     if (!phaseUpdate.gameWinner || !phaseUpdate.gameWinner.team) { 
                         sendWebSocketMessage('game_phase_change', { payload: { phase: 'night', message: "Night has fallen. Everyone, close your eyes." } });
                     }
@@ -716,10 +722,12 @@
 
                 if (phaseUpdate) { 
                     logToModerator("Day phase processing complete (server updated). Elim Result: " + JSON.stringify(phaseUpdate.eliminationResult), "Phase");
+                    // Only send phase change WS if game is not over (server now includes gameWinner in response)
                     if (!phaseUpdate.gameWinner || !phaseUpdate.gameWinner.team) { 
                         const daybreakPayload = {
                             phase: 'day',
                             message: "Daybreak! Open your eyes and discuss.",
+                            // Use eliminationResult directly from the server's response
                             eliminatedPlayer: phaseUpdate.eliminationResult?.eliminatedPlayerName, 
                             specialInfo: phaseUpdate.eliminationResult?.specialInfo 
                         };
@@ -992,7 +1000,7 @@
                 }
             });
             
-            // General Message button - Fixed
+            // General Message button
             sendMessageBtn.addEventListener('click', () => {
                 logToModerator("Send Message button clicked.", "Debug");
                 const message = messageInput.value.trim();
