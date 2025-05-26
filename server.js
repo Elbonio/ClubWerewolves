@@ -292,21 +292,29 @@ app.put('/api/sessions/:sessionId', async (req, res) => {
     if (!pool) return res.status(500).json({ message: "Database not configured." });
     const { sessionId } = req.params;
     const { sessionName, sessionDate } = req.body;
-    if (!sessionName && !sessionDate) {
-        return res.status(400).json({ message: "Nothing to update (provide sessionName or sessionDate)." });
+    
+    let query = 'UPDATE sessions SET ';
+    const params = [];
+    const setClauses = [];
+
+    if (sessionName !== undefined) { // Allow empty string for name if intended
+        setClauses.push('session_name = ?');
+        params.push(sessionName);
     }
+    if (sessionDate) {
+        setClauses.push('session_date = ?');
+        params.push(sessionDate);
+    }
+    
+    if (setClauses.length === 0) {
+        return res.status(400).json({ message: "No valid fields to update (provide sessionName or sessionDate)." });
+    }
+
+    query += setClauses.join(', ');
+    query += ' WHERE session_id = ? AND is_archived = FALSE'; 
+    params.push(sessionId);
+
     try {
-        let query = 'UPDATE sessions SET ';
-        const params = [];
-        let updatedFields = 0;
-        if (sessionName) { query += 'session_name = ? '; params.push(sessionName); updatedFields++;}
-        if (sessionDate) { query += (params.length > 0 ? ', ' : '') + 'session_date = ? '; params.push(sessionDate); updatedFields++;}
-        
-        if(updatedFields === 0) return res.status(400).json({ message: "No valid fields to update." });
-
-        query += 'WHERE session_id = ? AND is_archived = FALSE'; 
-        params.push(sessionId);
-
         const [result] = await pool.execute(query, params);
         if (result.affectedRows === 0) return res.status(404).json({ message: "Session not found or is archived." });
         
@@ -598,7 +606,7 @@ app.post('/api/games/:gameId/phase', async (req, res) => {
             game.werewolfNightTarget = null; 
             game.playersOnTrial = []; game.votes = {}; 
             await pool.execute('UPDATE games SET current_phase = ?, werewolf_night_target = NULL, players_on_trial = ?, votes = ? WHERE game_id = ?', 
-                [phase, null, JSON.stringify(game.playersOnTrial || []), JSON.stringify(game.votes || {}), gameId]); // Added default for JSON
+                [phase, JSON.stringify(game.playersOnTrial || []), JSON.stringify(game.votes || {}), gameId]); // Corrected werewolf_night_target to NULL directly
             console.log("Game " + gameId + " phase changed to NIGHT (DB updated)");
         } else if (phase === 'day') {
             console.log("Game " + gameId + " phase changed to DAY from " + previousPhase);
