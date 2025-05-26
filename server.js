@@ -17,7 +17,7 @@ const mysql = require('mysql2/promise');
 const app = express(); 
 app.use(express.json()); 
 
-const SERVER_VERSION = "0.9.2"; 
+const SERVER_VERSION = "0.9.3"; 
 
 // --- Database Connection Pool ---
 let pool;
@@ -85,6 +85,9 @@ CREATE TABLE IF NOT EXISTS game_players (
 );
 */
 
+// --- In-Memory Data Store for Games (until fully migrated) ---
+let games = {}; // This will be populated from/reflect DB state for loaded games
+
 const ALL_ROLES_SERVER = {
     VILLAGER: { name: "Villager", description: "Find and eliminate the werewolves.", team: "Good", alignment: "Village" },
     WEREWOLF: { name: "Werewolf", description: "Eliminate the villagers to win.", team: "Evil", alignment: "Werewolf" },
@@ -104,7 +107,7 @@ async function getMasterPlayerByNameDB(playerName) {
 }
 
 function broadcastToGameClients(gameId, messageObject) {
-    console.log("SERVER: Broadcasting to WS clients:", JSON.stringify(messageObject));
+    console.log("SERVER: Broadcasting WS message:", JSON.stringify(messageObject));
     clients.forEach(client => {
         if (client.readyState === WebSocket.OPEN) {
             const messageToSend = { ...messageObject, gameId: messageObject.gameId || gameId };
@@ -203,18 +206,14 @@ app.post('/api/master-players', async (req, res) => {
 app.get('/api/games', async (req, res) => {
     if (!pool) return res.status(500).json({ message: "Database not configured." });
     try {
-        const [gameRows] = await pool.query('SELECT game_id, game_name, current_phase, game_winner_team FROM games ORDER BY created_at DESC');
-        const gameListPromises = gameRows.map(async (game) => {
-            const [playerRows] = await pool.execute('SELECT COUNT(*) as playerCount FROM game_players WHERE game_id = ?', [game.game_id]);
-            return {
-                gameId: game.game_id,
-                gameName: game.game_name,
-                playerCount: playerRows[0].playerCount,
-                currentPhase: game.current_phase,
-                gameWinner: game.game_winner_team ? { team: game.game_winner_team } : null 
-            };
-        });
-        const gameList = await Promise.all(gameListPromises);
+        const [gameRows] = await pool.query('SELECT g.game_id, g.game_name, g.current_phase, g.game_winner_team, COUNT(gp.player_id) as playerCount FROM games g LEFT JOIN game_players gp ON g.game_id = gp.game_id GROUP BY g.game_id ORDER BY g.created_at DESC');
+        const gameList = gameRows.map(game => ({
+            gameId: game.game_id,
+            gameName: game.game_name,
+            playerCount: game.playerCount,
+            currentPhase: game.current_phase,
+            gameWinner: game.game_winner_team ? { team: game.game_winner_team } : null 
+        }));
         res.json(gameList);
     } catch (error) {
         console.error("Error fetching games list from DB:", error);
@@ -242,8 +241,7 @@ app.post('/api/games', async (req, res) => {
             [newGameId, newGameDisplayName, 'setup', JSON.stringify([]), JSON.stringify({}), JSON.stringify([]), JSON.stringify([])]
         );
         
-        // Initialize in-memory representation for this new game
-        games[newGameId] = {
+        games[newGameId] = { // Still keep an in-memory representation for ongoing game logic
             gameId: newGameId, gameName: newGameDisplayName,
             playersInGame: {}, playerOrder: [], currentPhase: 'setup', gameLog: [],
             seerPlayerName: null, werewolfNightTarget: null, playersOnTrial: [], votes: {}, gameWinner: null
@@ -251,7 +249,7 @@ app.post('/api/games', async (req, res) => {
         console.log('New game created (DB & in-memory):', newGameDisplayName, '(ID:', newGameId, ')');
         res.status(201).json({ gameId: newGameId, gameName: newGameDisplayName });
     } catch (error) {
-        console.error("Error creating new game in DB or updating in-memory store:", error); 
+        console.error("Error creating new game:", error); 
         res.status(500).json({ message: "Failed to create new game." });
     }
 });
@@ -262,25 +260,33 @@ app.get('/api/games/:gameId', async (req, res) => {
     try {
         const [gameRows] = await pool.execute('SELECT * FROM games WHERE game_id = ?', [gameId]);
         if (gameRows.length === 0) {
-            // If not in DB, also remove from in-memory cache if it somehow exists there
-            if (games[gameId]) delete games[gameId];
+            if (games[gameId]) delete games[gameId]; 
             return res.status(404).json({ message: 'Game not found.' });
         }
         const gameDataFromDB = gameRows[0];
         
+        const playerOrder = gameDataFromDB.player_order_json ? JSON.parse(gameDataFromDB.player_order_json) : [];
+        
         const [playerDetailRows] = await pool.execute(
-            'SELECT mp.id as player_id, gp.player_name, gp.role_name, gp.role_team, gp.role_alignment, gp.status FROM game_players gp JOIN master_players mp ON gp.player_id = mp.id WHERE gp.game_id = ?',
+            'SELECT mp.id as player_id, gp.player_name, gp.role_name, gp.status FROM game_players gp JOIN master_players mp ON gp.player_id = mp.id WHERE gp.game_id = ?',
             [gameId]
         );
 
         const playersInGameFromDB = {};
-        playerDetailRows.forEach(p => {
-            playersInGameFromDB[p.player_name] = {
-                id: p.player_id,
-                roleName: p.role_name,
-                roleDetails: p.role_name ? (ALL_ROLES_SERVER[p.role_name.toUpperCase()] || Object.values(ALL_ROLES_SERVER).find(r => r.name === p.role_name) || null) : null,
-                status: p.status
-            };
+        playerOrder.forEach(name => { // Use playerOrder to build playersInGame in correct sequence
+            const pDetail = playerDetailRows.find(pdr => pdr.player_name === name);
+            if (pDetail) {
+                playersInGameFromDB[name] = {
+                    id: pDetail.player_id,
+                    roleName: pDetail.role_name,
+                    roleDetails: pDetail.role_name ? (ALL_ROLES_SERVER[Object.keys(ALL_ROLES_SERVER).find(key => ALL_ROLES_SERVER[key].name === pDetail.role_name)] || null) : null,
+                    status: pDetail.status
+                };
+            } else {
+                // Player in order but not in details? Could happen if player removed from master list. Handle gracefully.
+                console.warn("Player " + name + " found in player_order_json but not in game_players details for game " + gameId);
+                // playersInGameFromDB[name] = { id: null, roleName: null, roleDetails: null, status: 'unknown' };
+            }
         });
         
         const fullGameData = {
@@ -291,14 +297,14 @@ app.get('/api/games/:gameId', async (req, res) => {
             werewolfNightTarget: gameDataFromDB.werewolf_night_target,
             playersOnTrial: gameDataFromDB.players_on_trial ? JSON.parse(gameDataFromDB.players_on_trial) : [],
             votes: gameDataFromDB.votes ? JSON.parse(gameDataFromDB.votes) : {},
-            playerOrder: gameDataFromDB.player_order_json ? JSON.parse(gameDataFromDB.player_order_json) : [],
+            playerOrder: playerOrder,
             gameWinner: gameDataFromDB.game_winner_team ? { team: gameDataFromDB.game_winner_team, reason: gameDataFromDB.game_winner_reason } : null,
             gameLog: gameDataFromDB.game_log ? JSON.parse(gameDataFromDB.game_log) : [],
             playersInGame: playersInGameFromDB 
         };
         
-        games[gameId] = fullGameData; // Update in-memory cache
-        console.log("SERVER: Loaded game " + gameId + " from DB. Phase: " + fullGameData.currentPhase);
+        games[gameId] = fullGameData; 
+        console.log("SERVER: Loaded game " + gameId + " from DB. Phase: " + fullGameData.currentPhase + ". Players: " + fullGameData.playerOrder.join(', '));
         res.json(fullGameData);
 
     } catch (error) {
@@ -316,10 +322,16 @@ app.post('/api/games/:gameId/players', async (req, res) => {
     if (!game) { 
         const [gameRows] = await pool.execute('SELECT * FROM games WHERE game_id = ?', [gameId]);
         if (gameRows.length === 0) return res.status(404).json({ message: 'Game not found.' });
-        game = gameRows[0]; 
+        // Initialize from DB if not in memory
+        game = { 
+            ...gameRows[0],
+            playersInGame: {}, // Will be repopulated from game_players or newly added
+            playerOrder: gameRows[0].player_order_json ? JSON.parse(gameRows[0].player_order_json) : [],
+            playersOnTrial: gameRows[0].players_on_trial ? JSON.parse(gameRows[0].players_on_trial) : [],
+            votes: gameRows[0].votes ? JSON.parse(gameRows[0].votes) : {},
+            gameLog: gameRows[0].game_log ? JSON.parse(gameRows[0].game_log) : [],
+        };
         games[gameId] = game; 
-        game.playersInGame = {}; 
-        game.playerOrder = [];
     }
 
     if (game.gameWinner) return res.status(400).json({ message: 'Cannot modify players, game already finished.' });
@@ -368,7 +380,7 @@ app.post('/api/games/:gameId/players', async (req, res) => {
 app.post('/api/games/:gameId/assign-roles', async (req, res) => {
     const gameId = req.params.gameId;
     const game = games[gameId]; 
-    if (!game || !game.playerOrder || game.playerOrder.length === 0) return res.status(400).json({ message: 'No players.' });
+    if (!game || !game.playerOrder || game.playerOrder.length === 0) return res.status(400).json({ message: 'No players in game to assign roles.' });
     if (game.gameWinner) return res.status(400).json({ message: 'Game already finished.' });
 
     let rolesToAssign = []; 
@@ -387,15 +399,13 @@ app.post('/api/games/:gameId/assign-roles', async (req, res) => {
         for (const [index, playerName] of game.playerOrder.entries()) {
             const assignedRoleDetails = rolesToAssign[index];
             const masterPlayer = await getMasterPlayerByNameDB(playerName); 
-            const playerId = masterPlayer ? masterPlayer.id : 'uid_fallback_' + playerName;
+            const playerId = masterPlayer ? masterPlayer.id : 'uid_fallback_' + playerName; 
 
-            const [existingGP] = await connection.execute('SELECT id FROM game_players WHERE game_id = ? AND player_name = ?', [gameId, playerName]);
-            if (existingGP.length > 0) {
-                 await connection.execute(
-                    'UPDATE game_players SET role_name = ?, role_team = ?, role_alignment = ?, status = ?, player_id = ? WHERE game_id = ? AND player_name = ?',
-                    [assignedRoleDetails.name, assignedRoleDetails.team, assignedRoleDetails.alignment, 'alive', playerId, gameId, playerName]
-                );
-            } else { // Should not happen if /players endpoint was called first, but as a fallback
+            const [updateResult] = await connection.execute(
+                'UPDATE game_players SET role_name = ?, role_team = ?, role_alignment = ?, status = ? WHERE game_id = ? AND player_name = ?',
+                [assignedRoleDetails.name, assignedRoleDetails.team, assignedRoleDetails.alignment, 'alive', gameId, playerName]
+            );
+            if (updateResult.affectedRows === 0) { 
                  await connection.execute(
                     'INSERT INTO game_players (game_id, player_id, player_name, role_name, role_team, role_alignment, status) VALUES (?, ?, ?, ?, ?, ?, ?)',
                     [gameId, playerId, playerName, assignedRoleDetails.name, assignedRoleDetails.team, assignedRoleDetails.alignment, 'alive']
@@ -435,7 +445,7 @@ app.post('/api/games/:gameId/assign-roles', async (req, res) => {
 
 app.post('/api/games/:gameId/player-status', async (req, res) => {
     const gameId = req.params.gameId;
-    const game = games[gameId];
+    const game = games[gameId]; 
     const { playerName, status } = req.body;
     if (!game || !game.playersInGame[playerName]) return res.status(404).json({ message: 'Game or player not found.' });
     if (game.gameWinner) return res.status(400).json({ message: 'Game already finished.' });
@@ -497,7 +507,7 @@ app.post('/api/games/:gameId/phase', async (req, res) => {
         await checkWinConditions(game); 
     }
     
-    game.eliminationResult = eliminationResult;
+    game.eliminationResult = eliminationResult; // Ensure this is set on the game object for the response
     res.status(200).json(game); 
 });
 
