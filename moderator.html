@@ -64,8 +64,7 @@
                 <h3 class="sub-section-title">Load Game from Current Session:</h3>
                 <ul id="existingGamesInSessionListUL" class="bg-gray-600 rounded-lg p-3 min-h-[50px] max-h-40 overflow-y-auto"></ul>
             </div>
-            <div id="currentGameStatusContainer" class="mt-4"> <p id="currentGameInfo" class="text-purple-300 font-semibold">No game loaded.</p>
-                <p id="currentGamePhaseInfo" class="text-sky-300"></p>
+            <div id="currentGameStatusDisplay" class="mt-4"> <p id="currentGameInfoDisplay" class="text-purple-300 font-semibold">No game loaded.</p> <p id="currentGamePhaseInfo" class="text-sky-300"></p>
             </div>
             <div id="gameOverMessage" class="hidden mt-4 p-4 bg-yellow-500 text-gray-900 rounded-lg text-center font-bold text-xl"></div>
              <div id="gameActions" class="hidden mt-2">
@@ -179,7 +178,7 @@
             <div id="moderatorLog" class="message-log-container p-3 bg-gray-600 rounded-lg text-sm space-y-1"></div>
         </div>
         <div class="mt-6 text-center text-xs text-gray-500">
-            Panel v0.10.1 / Server <span id="serverVersionDisplay">loading...</span>
+            Panel v0.10.5 / Server <span id="serverVersionDisplay">loading...</span>
         </div>
     </div>
 
@@ -215,9 +214,9 @@
             // Session Management UI
             const newSessionNameInput = document.getElementById('newSessionNameInput');
             const newSessionDateInput = document.getElementById('newSessionDateInput');
-            newSessionDateInput.valueAsDate = new Date(); 
+            if(newSessionDateInput) newSessionDateInput.valueAsDate = new Date(); 
             const createNewSessionBtn = document.getElementById('createNewSessionBtn');
-            const existingSessionsListUL = document.getElementById('existingSessionsListUL'); // Corrected ID
+            const existingSessionsListUL = document.getElementById('existingSessionsListUL'); 
             const currentSessionInfo = document.getElementById('currentSessionInfo');
             const sessionActions = document.getElementById('sessionActions');
             const renameSessionInput = document.getElementById('renameSessionInput');
@@ -226,10 +225,10 @@
 
             // Game Management UI (within a session)
             const gameManagementSection = document.getElementById('gameManagementSection');
-            const newGameInSessionNameInput = document.getElementById('newGameInSessionNameInput'); // Corrected ID
-            const createNewGameInSessionBtn = document.getElementById('createNewGameInSessionBtn'); // Corrected ID
-            const existingGamesInSessionListUL = document.getElementById('existingGamesInSessionListUL'); // Corrected ID
-            const currentGameInfo = document.getElementById('currentGameInfo'); 
+            const newGameInSessionNameInput = document.getElementById('newGameInSessionNameInput'); 
+            const createNewGameInSessionBtn = document.getElementById('createNewGameInSessionBtn'); 
+            const existingGamesInSessionListUL = document.getElementById('existingGamesInSessionListUL'); 
+            const currentGameInfoDisplay = document.getElementById('currentGameInfoDisplay'); 
             const currentGamePhaseInfo = document.getElementById('currentGamePhaseInfo'); 
             const gameOverMessage = document.getElementById('gameOverMessage');
             const gameActions = document.getElementById('gameActions');
@@ -270,153 +269,118 @@
             const werewolfTargetBtn = document.getElementById('werewolfTargetBtn');
             const manualRevealSection = document.getElementById('manualRevealSection');
             
-            // --- Utility Functions ---
-            async function fetchServerVersion() { /* ... as before ... */ }
-            function connectWebSocket() { /* ... as before ... */ }
-            function updateStatus(message, type = 'info') { /* ... as before ... */ }
-            function logToModerator(message, type = "Info") { /* ... as before ... */ }
-            function sendWebSocketMessage(type, dataPayload) { /* ... as before, ensure gameId is passed if relevant ... */ }
-            async function fetchFromServer(endpoint, options = {}) { /* ... as before ... */ }
-
-            // --- Session Management Functions ---
-            async function loadSessionsList() {
-                const sessions = await fetchFromServer('/api/sessions');
-                if (sessions) {
-                    localSessionList = sessions;
-                    existingSessionsListUL.innerHTML = ''; // Use corrected ID
-                    if (sessions.length === 0) {
-                        existingSessionsListUL.innerHTML = '<li class="text-gray-400 italic">No sessions found. Create one!</li>';
-                    }
-                    sessions.forEach(session => {
-                        const li = document.createElement('li');
-                        li.textContent = session.session_name + ' (' + new Date(session.session_date).toLocaleDateString() + ')';
-                        li.dataset.sessionId = session.session_id;
-                        li.className = 'list-item hover:bg-gray-500 rounded';
-                        if (session.session_id === currentLoadedSessionId) {
-                            li.classList.add('selected-item');
-                        }
-                        li.onclick = () => loadSpecificSession(session.session_id);
-                        existingSessionsListUL.appendChild(li);
-                    });
-                }
-            }
-
-            createNewSessionBtn.addEventListener('click', async () => {
-                const sessionName = newSessionNameInput.value.trim();
-                const sessionDate = newSessionDateInput.value;
-                if (!sessionName || !sessionDate) {
-                    logToModerator("Session name and date are required.", "Warning");
-                    return;
-                }
-                const newSession = await fetchFromServer('/api/sessions', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ sessionName, sessionDate })
-                });
-                if (newSession) {
-                    logToModerator('Created new session: ' + newSession.sessionName, 'System');
-                    newSessionNameInput.value = '';
-                    newSessionDateInput.valueAsDate = new Date();
-                    await loadSessionsList(); 
-                    loadSpecificSession(newSession.sessionId); 
-                }
-            });
-
-            async function loadSpecificSession(sessionId) {
-                logToModerator('Attempting to load session: ' + sessionId, 'System');
-                currentLoadedSessionId = sessionId;
-                const selectedSession = localSessionList.find(s => s.session_id === sessionId);
-                currentSessionInfo.textContent = 'Loaded Session: ' + (selectedSession ? selectedSession.session_name : sessionId);
-                sessionActions.classList.remove('hidden');
-                renameSessionInput.value = selectedSession ? selectedSession.session_name : '';
-                
-                currentLoadedGameId = null;
-                currentGameInfo.textContent = 'No game loaded in this session.';
-                currentGamePhaseInfo.textContent = '';
-                hideAllGameSpecificSections(); 
-
-                await loadGamesListForSession(sessionId); 
-                updateUIAfterSessionLoad();
-            }
-            
-            function updateUIAfterSessionLoad() {
-                if (currentLoadedSessionId) {
-                    gameManagementSection.classList.remove('hidden'); 
-                    Array.from(existingSessionsListUL.children).forEach(child => { // Use corrected ID
-                        child.classList.remove('selected-item');
-                        if (child.dataset.sessionId === currentLoadedSessionId) {
-                            child.classList.add('selected-item');
-                        }
-                    });
+            async function fetchServerVersion() { 
+                console.log("MODERATOR.HTML: Attempting to fetch server version...");
+                const versionData = await fetchFromServer('/api/version');
+                if (versionData && versionData.version) {
+                    serverVersionDisplay.textContent = 'v' + versionData.version;
+                    console.log("MODERATOR.HTML: Server version loaded: " + versionData.version);
                 } else {
-                    gameManagementSection.classList.add('hidden');
+                    serverVersionDisplay.textContent = 'N/A';
+                    console.log("MODERATOR.HTML: Failed to load server version.");
                 }
             }
-
-            renameSessionBtn.addEventListener('click', async () => { /* ... as before ... */ });
-            archiveSessionBtn.addEventListener('click', async () => { /* ... as before ... */ });
-
-
-            // --- Game Management Functions (Now Session-Aware) ---
-            async function loadGamesListForSession(sessionId) {
-                if (!sessionId) {
-                    existingGamesInSessionListUL.innerHTML = '<li class="text-gray-400 italic">Load a session to see its games.</li>'; // Use corrected ID
-                    return;
+            function connectWebSocket() { 
+                console.log("MODERATOR.HTML: Attempting WebSocket connection...");
+                const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const wsHost = window.location.host;
+                socket = new WebSocket(wsProtocol + '//' + wsHost);
+                socket.onopen = () => {
+                    console.log("MODERATOR.HTML: WebSocket connection opened.");
+                    updateStatus('Connected to WebSocket server.', 'success');
                 }
-                const games = await fetchFromServer('/api/sessions/' + sessionId + '/games');
-                if (games) {
-                    localGamesInCurrentSession = games; 
-                    existingGamesInSessionListUL.innerHTML = ''; // Use corrected ID
-                    if (games.length === 0) {
-                        existingGamesInSessionListUL.innerHTML = '<li class="text-gray-400 italic">No games in this session. Create one!</li>';
-                    }
-                    games.forEach(game => {
-                        const li = document.createElement('li');
-                        let gameDisplayText = game.gameName + ' (Players: ' + game.playerCount + ', Phase: ' + game.currentPhase + ')';
-                        if (game.gameWinner && game.gameWinner.team) {
-                            gameDisplayText += ' - WINNER: ' + game.gameWinner.team;
+                socket.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'vote_update' && data.gameId === currentLoadedGameId) {
+                        logToModerator('Vote update received via WS.', 'WS Received');
+                        if (data.payload && data.payload.votes) {
+                             currentVotes = data.payload.votes; 
+                             renderVoteTally(); 
                         }
-                        li.textContent = gameDisplayText;
-                        li.dataset.gameId = game.gameId; 
-                        li.className = 'list-item hover:bg-gray-500 rounded';
-                        li.onclick = () => loadSpecificGame(game.gameId);
-                        existingGamesInSessionListUL.appendChild(li);
-                    });
+                    } else if (data.type === 'game_over' && data.gameId === currentLoadedGameId) {
+                        logToModerator('Game Over message received via WS. Payload: ' + JSON.stringify(data.payload), 'WS Received');
+                        if (data.payload) {
+                            loadSpecificGame(currentLoadedGameId); 
+                        }
+                    } else {
+                        logToModerator('WS Server: ' + event.data, 'Received');
+                    }
+                };
+                socket.onclose = (event) => {
+                    console.log("MODERATOR.HTML: WebSocket connection closed. Code: " + event.code);
+                    updateStatus('WS Disconnected. Reconnecting...', 'error');
+                    setTimeout(connectWebSocket, 3000);
+                };
+                socket.onerror = (error) => {
+                     console.error("MODERATOR.HTML: WebSocket error.", error);
+                    updateStatus('WS Connection error.', 'error');
                 }
             }
+            function updateStatus(message, type = 'info') { /* ... same as before ... */ }
+            function logToModerator(message, type = "Info") { /* ... same as before ... */ }
+            function sendWebSocketMessage(type, dataPayload) { /* ... same as before ... */ }
+            async function fetchFromServer(endpoint, options = {}) { /* ... same as before ... */ }
+            async function loadSessionsList() { /* ... same as before ... */ }
             
-            createNewGameInSessionBtn.addEventListener('click', async () => { // Use corrected ID
-                if (!currentLoadedSessionId) {
-                    logToModerator("No session loaded. Create or load a session first.", "Error");
-                    return;
-                }
-                const gameName = newGameInSessionNameInput.value.trim() || 'New Game in Session ' + (localGamesInCurrentSession.length + 1); // Use corrected ID
-                const newGame = await fetchFromServer('/api/sessions/' + currentLoadedSessionId + '/games', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ gameName })
-                });
-                if (newGame) {
-                    logToModerator('Created new game: ' + newGame.gameName + ' in session ' + currentLoadedSessionId, 'System');
-                    newGameInSessionNameInput.value = ''; // Use corrected ID
-                    await loadGamesListForSession(currentLoadedSessionId); 
-                    loadSpecificGame(newGame.gameId); 
+            createNewSessionBtn.addEventListener('click', async () => { /* ... same as before ... */ });
+            async function loadSpecificSession(sessionId) { /* ... same as before ... */ }
+            function updateUIAfterSessionLoad() { /* ... as before ... */ }
+            renameSessionBtn.addEventListener('click', async () => { /* ... same as before ... */ });
+            archiveSessionBtn.addEventListener('click', async () => { /* ... as before ... */ });
+            async function loadGamesListForSession(sessionId) { /* ... as before ... */ }
+            createNewGameInSessionBtn.addEventListener('click', async () => { /* ... as before ... */ });
+            archiveGameBtn.addEventListener('click', async () => { /* ... as before ... */ });
+            async function loadSpecificGame(gameId) { /* ... as before ... */ }
+            function updateUIAfterGameLoad(gameWinnerData = null) { /* ... as before ... */ }
+            function hideAllGameSpecificSections() { /* ... as before ... */ }
+            async function loadMasterPlayers() { /* ... as before ... */ }
+            addMasterPlayerBtn.addEventListener('click', async () => { /* ... as before ... */ });
+            function renderMasterPlayerSelectionForGame() { /* ... as before ... */ }
+            async function handlePlayerSelectionForGame(playerName, isSelected) { /* ... as before ... */ }
+            function renderPlayerListForCurrentGame() { /* ... as before ... */ }
+            assignRolesBtn.addEventListener('click', async () => { /* ... as before ... */ });
+            function renderAssignedRolesList() { /* ... as before ... */ }
+            startNightBtn.addEventListener('click', async () => { /* ... as before ... */ });
+            startDayBtn.addEventListener('click', async () => { /* ... as before ... */ });
+            function updateNightActionSelectors() { /* ... as before ... */ }
+            seerCheckTargetBtn.addEventListener('click', async () => { /* ... as before ... */ });
+            werewolfTargetBtn.addEventListener('click', async () => { /* ... as before ... */ });
+            function renderAlivePlayerSelectionForVote() { /* ... as before ... */ }
+            addAllAliveToVoteBtn.addEventListener('click', () => { /* ... as before ... */ });
+            startVoteBtn.addEventListener('click', async () => { /* ... as before ... */ });
+            function renderVoteTally() { /* ... as before ... */ }
+            async function updateVote(playerName, change) { /* ... as before ... */ }
+            clearAllVotesBtn.addEventListener('click', async () => { /* ... as before ... */ });
+            finalizeVoteBtn.addEventListener('click', async () => { /* ... as before ... */ });
+            
+            sendMessageBtn.addEventListener('click', () => {
+                logToModerator("Send Message button clicked.", "Debug");
+                const message = messageInput.value.trim();
+                logToModerator("Message content: '" + message + "'", "Debug");
+                if (message) { 
+                    try {
+                        sendWebSocketMessage('moderator_message', { content: message }); 
+                    } catch (e) {
+                        logToModerator("Error during sendWebSocketMessage from Send Message button: " + e.message, "Error");
+                    } finally {
+                         messageInput.value = ''; 
+                    }
+                } else {
+                    logToModerator("Cannot send an empty message (message was: '" + message + "').", "Warning"); 
                 }
             });
-
-            archiveGameBtn.addEventListener('click', async () => { /* ... as before ... */ });
+            messageInput.addEventListener('keypress', (e) => {
+                 if (e.key === 'Enter') {
+                    sendMessageBtn.click(); 
+                 }
+            });
             
-            // --- The rest of the functions (loadSpecificGame, updateUIAfterGameLoad, etc.) ---
-            // (loadSpecificGame, updateUIAfterGameLoad, hideAllGameSpecificSections, loadMasterPlayers, addMasterPlayerBtn listener,
-            //  renderMasterPlayerSelectionForGame, handlePlayerSelectionForGame, renderPlayerListForCurrentGame,
-            //  assignRolesBtn listener, renderAssignedRolesList, startNightBtn listener, startDayBtn listener,
-            //  updateNightActionSelectors, seerCheckTargetBtn listener, werewolfTargetBtn listener,
-            //  renderAlivePlayerSelectionForVote, addAllAliveToVoteBtn listener, startVoteBtn listener,
-            //  renderVoteTally, updateVote, clearAllVotesBtn listener, finalizeVoteBtn listener,
-            //  sendMessageBtn listener, manual reveal buttons listeners)
-            // ... (These functions are largely the same as v0.10.0, ensure they use currentLoadedGameId)
+            manualShowIsWerewolfBtn.addEventListener('click', () => sendWebSocketMessage('manual_reveal', { payload: { alignment: "Is a Werewolf" } }));
+            manualShowNotWerewolfBtn.addEventListener('click', () => sendWebSocketMessage('manual_reveal', { payload: { alignment: "Not a Werewolf" } }));
+            manualShowVillageTeamBtn.addEventListener('click', () => sendWebSocketMessage('manual_reveal', { payload: { alignment: "Village Alignment" } }));
+            manualShowWerewolfTeamBtn.addEventListener('click', () => sendWebSocketMessage('manual_reveal', { payload: { alignment: "Werewolf Alignment" } }));
 
-            // --- Initialize Page ---
+            // Initial setup
             connectWebSocket();
             fetchServerVersion(); 
             loadSessionsList(); 

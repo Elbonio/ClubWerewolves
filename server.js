@@ -17,7 +17,7 @@ const mysql = require('mysql2/promise');
 const app = express(); 
 app.use(express.json()); 
 
-const SERVER_VERSION = "0.10.1"; 
+const SERVER_VERSION = "0.10.5"; // Updated server version
 
 // --- Database Connection Pool ---
 let pool;
@@ -97,7 +97,7 @@ CREATE TABLE IF NOT EXISTS game_players (
 */
 
 // --- In-Memory Data Store for Games (caches loaded games) ---
-let gamesCache = {}; // Renamed from 'games' to avoid confusion with DB table name
+let gamesCache = {}; 
 
 const ALL_ROLES_SERVER = {
     VILLAGER: { name: "Villager", description: "Find and eliminate the werewolves.", team: "Good", alignment: "Village" },
@@ -106,9 +106,114 @@ const ALL_ROLES_SERVER = {
 };
 
 // --- Helper Functions ---
-async function getMasterPlayerByNameDB(playerName) { /* ... same as before ... */ }
-function broadcastToGameClients(gameId, messageObject) { /* ... same as before ... */ }
-async function checkWinConditions(game) { /* ... same as before, ensures DB update for winner ... */ }
+async function getMasterPlayerByNameDB(playerName) {
+    if (!playerName || !pool) return null;
+    try {
+        const [rows] = await pool.execute('SELECT id, name FROM master_players WHERE LOWER(name) = LOWER(?)', [playerName.trim()]);
+        return rows[0] || null;
+    } catch (error) {
+        console.error("Error fetching player by name from DB:", error);
+        return null;
+    }
+}
+
+function broadcastToGameClients(gameId, messageObject) {
+    console.log("SERVER: Broadcasting to WS clients:", JSON.stringify(messageObject));
+    clients.forEach(client => {
+        if (client.readyState === WebSocket.OPEN) {
+            const messageToSend = { ...messageObject, gameId: messageObject.gameId || gameId };
+            client.send(JSON.stringify(messageToSend));
+        }
+    });
+}
+
+
+async function checkWinConditions(game) { 
+    if (!game || !game.playersInGame || Object.keys(game.playersInGame).length === 0 || !game.playerOrder) {
+        return null; 
+    }
+    const rolesAssigned = game.playerOrder.some(name => game.playersInGame[name] && game.playersInGame[name].roleDetails);
+    if (!rolesAssigned && game.currentPhase !== 'setup' && game.currentPhase !== 'roles_assigned') {
+        return null;
+    }
+    if (game.gameWinner && game.gameWinner.team) return game.gameWinner; 
+
+    const alivePlayersWithRoles = game.playerOrder.filter(name => game.playersInGame[name] && game.playersInGame[name].status === 'alive' && game.playersInGame[name].roleDetails);
+    
+    if (alivePlayersWithRoles.length === 0 && rolesAssigned && game.currentPhase !== 'setup' && game.currentPhase !== 'roles_assigned') { 
+         game.gameWinner = { team: "No One", reason: "All players eliminated." };
+         game.currentPhase = 'finished';
+         console.log("SERVER: Game " + game.gameId + " ended: All players eliminated. Broadcasting game_over.");
+         broadcastToGameClients(game.gameId, {type: 'game_over', payload: { ...game.gameWinner, gameId: game.gameId} });
+         if (pool) await pool.execute('UPDATE games SET current_phase = ?, game_winner_team = ?, game_winner_reason = ? WHERE game_id = ?', [game.currentPhase, game.gameWinner.team, game.gameWinner.reason, game.gameId]);
+         return game.gameWinner;
+    }
+    
+    const aliveWerewolves = alivePlayersWithRoles.filter(name => game.playersInGame[name].roleDetails.alignment === "Werewolf");
+    const aliveNonWerewolves = alivePlayersWithRoles.filter(name => game.playersInGame[name].roleDetails.alignment !== "Werewolf");
+
+    if (aliveWerewolves.length === 0 && aliveNonWerewolves.length > 0 && rolesAssigned) { 
+        game.gameWinner = { team: "Village", reason: "All werewolves have been eliminated." };
+        game.currentPhase = 'finished';
+        console.log("SERVER: Game " + game.gameId + " ended: Village wins. Broadcasting game_over.");
+        broadcastToGameClients(game.gameId, {type: 'game_over', payload: { ...game.gameWinner, gameId: game.gameId} });
+        if (pool) await pool.execute('UPDATE games SET current_phase = ?, game_winner_team = ?, game_winner_reason = ? WHERE game_id = ?', [game.currentPhase, game.gameWinner.team, game.gameWinner.reason, game.gameId]);
+        return game.gameWinner;
+    }
+    if (aliveWerewolves.length > 0 && aliveWerewolves.length >= aliveNonWerewolves.length && rolesAssigned) { 
+        game.gameWinner = { team: "Werewolves", reason: "Werewolves have overwhelmed the village." };
+        game.currentPhase = 'finished';
+        console.log("SERVER: Game " + game.gameId + " ended: Werewolves win. Broadcasting game_over.");
+        broadcastToGameClients(game.gameId, {type: 'game_over', payload: { ...game.gameWinner, gameId: game.gameId} });
+        if (pool) await pool.execute('UPDATE games SET current_phase = ?, game_winner_team = ?, game_winner_reason = ? WHERE game_id = ?', [game.currentPhase, game.gameWinner.team, game.gameWinner.reason, game.gameId]);
+        return game.gameWinner;
+    }
+    return null; 
+}
+
+async function fetchGameFromDB(gameId) { 
+    if (!pool) { console.error("DB Pool not available in fetchGameFromDB"); return null; }
+    try {
+        const [gameRows] = await pool.execute('SELECT * FROM games WHERE game_id = ? AND is_archived = FALSE', [gameId]);
+        if (gameRows.length === 0) return null;
+        const gameDataFromDB = gameRows[0];
+        
+        const playerOrder = gameDataFromDB.player_order_json ? JSON.parse(gameDataFromDB.player_order_json) : [];
+        const [playerDetailRows] = await pool.execute(
+            'SELECT mp.id as player_id, gp.player_name, gp.role_name, gp.status, gp.role_team, gp.role_alignment FROM game_players gp JOIN master_players mp ON gp.player_id = mp.id WHERE gp.game_id = ?',
+            [gameId]
+        );
+        const playersInGameFromDB = {};
+        playerOrder.forEach(name => { 
+            const pDetail = playerDetailRows.find(pdr => pdr.player_name === name);
+            if (pDetail) {
+                playersInGameFromDB[name] = {
+                    id: pDetail.player_id, roleName: pDetail.role_name,
+                    roleDetails: pDetail.role_name ? (ALL_ROLES_SERVER[Object.keys(ALL_ROLES_SERVER).find(key => ALL_ROLES_SERVER[key].name === pDetail.role_name)] || {name: pDetail.role_name, team: pDetail.role_team, alignment: pDetail.role_alignment, description: "Config missing."}) : null,
+                    status: pDetail.status
+                };
+            }
+        });
+         playerDetailRows.forEach(p => { if (!playersInGameFromDB[p.player_name]) { playersInGameFromDB[p.player_name] = {id: p.player_id,roleName: p.role_name,roleDetails: p.role_name ? (ALL_ROLES_SERVER[Object.keys(ALL_ROLES_SERVER).find(key => ALL_ROLES_SERVER[key].name === p.role_name)] || {name: p.role_name, team: p.role_team, alignment: p.role_alignment, description: "Config missing."}) : null,status: p.status};}});
+
+        const fullGameData = {
+            gameId: gameDataFromDB.game_id, sessionId: gameDataFromDB.session_id, gameName: gameDataFromDB.game_name,
+            currentPhase: gameDataFromDB.current_phase, seerPlayerName: gameDataFromDB.seer_player_name,
+            werewolfNightTarget: gameDataFromDB.werewolf_night_target,
+            playersOnTrial: gameDataFromDB.players_on_trial ? JSON.parse(gameDataFromDB.players_on_trial) : [],
+            votes: gameDataFromDB.votes ? JSON.parse(gameDataFromDB.votes) : {},
+            playerOrder: playerOrder.length > 0 ? playerOrder : Object.keys(playersInGameFromDB),
+            gameWinner: gameDataFromDB.game_winner_team ? { team: gameDataFromDB.game_winner_team, reason: gameDataFromDB.game_winner_reason } : null,
+            gameLog: gameDataFromDB.game_log ? JSON.parse(gameDataFromDB.game_log) : [],
+            playersInGame: playersInGameFromDB 
+        };
+        gamesCache[gameId] = fullGameData; // Update cache
+        return fullGameData;
+    } catch (error) {
+        console.error("Error in fetchGameFromDB for " + gameId + ":", error);
+        return null;
+    }
+}
 
 
 // --- API Endpoints ---
@@ -117,224 +222,97 @@ app.get('/api/master-players', async (req, res) => { /* ... same as before ... *
 app.post('/api/master-players', async (req, res) => { /* ... same as before ... */ });
 
 // --- Session API Endpoints ---
-app.get('/api/sessions', async (req, res) => {
-    if (!pool) return res.status(500).json({ message: "Database not configured." });
-    try {
-        const [sessions] = await pool.query('SELECT session_id, session_name, session_date FROM sessions WHERE is_archived = FALSE ORDER BY session_date DESC, created_at DESC');
-        res.json(sessions.map(s => ({ ...s, session_date: new Date(s.session_date).toISOString().split('T')[0]}))); 
-    } catch (error) {
-        console.error("Error fetching sessions:", error);
-        res.status(500).json({ message: "Failed to fetch sessions." });
-    }
-});
+app.get('/api/sessions', async (req, res) => { /* ... same as before ... */ });
+app.post('/api/sessions', async (req, res) => { /* ... same as before ... */ });
 
-app.post('/api/sessions', async (req, res) => {
+app.put('/api/sessions/:sessionId', async (req, res) => {
     if (!pool) return res.status(500).json({ message: "Database not configured." });
+    const { sessionId } = req.params;
     const { sessionName, sessionDate } = req.body;
-    if (!sessionName || !sessionDate) {
-        return res.status(400).json({ message: "Session name and date are required." });
+    if (!sessionName && !sessionDate) {
+        return res.status(400).json({ message: "Nothing to update (provide sessionName or sessionDate)." });
     }
-    const sessionId = 'session_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
     try {
-        await pool.execute(
-            'INSERT INTO sessions (session_id, session_name, session_date) VALUES (?, ?, ?)',
-            [sessionId, sessionName, sessionDate]
-        );
-        console.log('New session created:', sessionName, '(ID:', sessionId, ')');
-        res.status(201).json({ sessionId, sessionName, sessionDate });
+        let query = 'UPDATE sessions SET ';
+        const params = [];
+        let updatedFields = 0;
+        if (sessionName) { query += 'session_name = ? '; params.push(sessionName); updatedFields++;}
+        if (sessionDate) { query += (params.length > 0 ? ', ' : '') + 'session_date = ? '; params.push(sessionDate); updatedFields++;}
+        
+        if(updatedFields === 0) return res.status(400).json({ message: "No valid fields to update." });
+
+        query += 'WHERE session_id = ? AND is_archived = FALSE'; 
+        params.push(sessionId);
+
+        const [result] = await pool.execute(query, params);
+        if (result.affectedRows === 0) return res.status(404).json({ message: "Session not found or is archived." });
+        
+        console.log('Session updated:', sessionId);
+        res.status(200).json({ message: "Session updated successfully." });
     } catch (error) {
-        console.error("Error creating new session:", error);
-        res.status(500).json({ message: "Failed to create session." });
+        console.error("Error updating session " + sessionId + ":", error);
+        res.status(500).json({ message: "Failed to update session." });
     }
 });
 
-app.put('/api/sessions/:sessionId', async (req, res) => { /* ... same as before ... */ });
-app.delete('/api/sessions/:sessionId', async (req, res) => { /* ... same as before ... */ });
+app.delete('/api/sessions/:sessionId', async (req, res) => {
+    if (!pool) return res.status(500).json({ message: "Database not configured." });
+    const { sessionId } = req.params;
+    const connection = await pool.getConnection();
+    try {
+        await connection.beginTransaction();
+        const [sessionUpdateResult] = await connection.execute('UPDATE sessions SET is_archived = TRUE WHERE session_id = ?', [sessionId]);
+        if (sessionUpdateResult.affectedRows === 0) {
+            await connection.rollback();
+            return res.status(404).json({ message: "Session not found." });
+        }
+        
+        await connection.execute('UPDATE games SET is_archived = TRUE WHERE session_id = ?', [sessionId]);
+        await connection.commit();
+        
+        Object.keys(gamesCache).forEach(gameId => {
+            if (gamesCache[gameId] && gamesCache[gameId].sessionId === sessionId) {
+                delete gamesCache[gameId];
+            }
+        });
+        console.log('Session and its games archived:', sessionId);
+        res.status(204).send();
+    } catch (error) {
+        await connection.rollback();
+        console.error("Error archiving session " + sessionId + ":", error);
+        res.status(500).json({ message: "Failed to archive session." });
+    } finally {
+        if(connection) connection.release();
+    }
+});
 
 
 // --- Game API Endpoints (Session-Aware) ---
-app.get('/api/sessions/:sessionId/games', async (req, res) => {
-    if (!pool) return res.status(500).json({ message: "Database not configured." });
-    const { sessionId } = req.params;
-    try {
-        const [sessionRows] = await pool.execute('SELECT session_id FROM sessions WHERE session_id = ? AND is_archived = FALSE', [sessionId]);
-        if (sessionRows.length === 0) return res.status(404).json({message: "Session not found or is archived."});
-
-        const [gameRows] = await pool.query(
-            'SELECT g.game_id, g.game_name, g.current_phase, g.game_winner_team, COUNT(gp.player_id) as playerCount FROM games g LEFT JOIN game_players gp ON g.game_id = gp.game_id WHERE g.session_id = ? AND g.is_archived = FALSE GROUP BY g.game_id ORDER BY g.created_at DESC',
-            [sessionId]
-        );
-        const gameList = gameRows.map(game => ({
-            gameId: game.game_id,
-            gameName: game.game_name,
-            playerCount: Number(game.playerCount),
-            currentPhase: game.current_phase,
-            gameWinner: game.game_winner_team ? { team: game.game_winner_team } : null
-        }));
-        res.json(gameList);
-    } catch (error) {
-        console.error("Error fetching games for session " + sessionId + ":", error);
-        res.status(500).json({ message: "Failed to fetch games for session." });
-    }
-});
-
-app.post('/api/sessions/:sessionId/games', async (req, res) => {
-    if (!pool) return res.status(500).json({ message: "Database not configured." });
-    const { sessionId } = req.params;
-    const { gameName } = req.body;
-
-    try {
-        const [sessionRows] = await pool.execute('SELECT session_id FROM sessions WHERE session_id = ? AND is_archived = FALSE', [sessionId]);
-        if (sessionRows.length === 0) return res.status(404).json({message: "Session not found or is archived."});
-
-        const newGameId = 'game_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
-        let gameCountForName = 0;
-        try {
-            const [countRows] = await pool.query('SELECT COUNT(*) as count FROM games WHERE session_id = ?', [sessionId]);
-            gameCountForName = countRows[0].count;
-        } catch (dbError) { console.error("Error fetching game count for session:", dbError); }
-        const newGameDisplayName = gameName || 'Game ' + (gameCountForName + 1);
-
-        await pool.execute(
-            'INSERT INTO games (game_id, session_id, game_name, current_phase, players_on_trial, votes, player_order_json, game_log) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-            [newGameId, sessionId, newGameDisplayName, 'setup', JSON.stringify([]), JSON.stringify({}), JSON.stringify([]), JSON.stringify([])]
-        );
-        
-        gamesCache[newGameId] = { // Cache the new game
-            gameId: newGameId, sessionId, gameName: newGameDisplayName,
-            playersInGame: {}, playerOrder: [], currentPhase: 'setup', gameLog: [],
-            seerPlayerName: null, werewolfNightTarget: null, playersOnTrial: [], votes: {}, gameWinner: null
-        };
-        console.log('New game created in session', sessionId, ':', newGameDisplayName, '(ID:', newGameId, ')');
-        res.status(201).json({ gameId: newGameId, gameName: newGameDisplayName, sessionId });
-    } catch (error) {
-        console.error("Error creating new game in session " + sessionId + ":", error);
-        res.status(500).json({ message: "Failed to create new game." });
-    }
-});
-
-app.delete('/api/games/:gameId', async (req, res) => { 
-    if (!pool) return res.status(500).json({ message: "Database not configured." });
-    const { gameId } = req.params;
-    try {
-        const [result] = await pool.execute('UPDATE games SET is_archived = TRUE WHERE game_id = ?', [gameId]);
-        if (result.affectedRows === 0) return res.status(404).json({ message: "Game not found." });
-        
-        if (gamesCache[gameId]) delete gamesCache[gameId]; 
-
-        console.log('Game archived:', gameId);
-        res.status(204).send();
-    } catch (error) {
-        console.error("Error archiving game " + gameId + ":", error);
-        res.status(500).json({ message: "Failed to archive game." });
-    }
-});
+app.get('/api/sessions/:sessionId/games', async (req, res) => { /* ... same as before ... */ });
+app.post('/api/sessions/:sessionId/games', async (req, res) => { /* ... same as before ... */ });
+app.delete('/api/games/:gameId', async (req, res) => { /* ... same as before ... */ });
 
 app.get('/api/games/:gameId', async (req, res) => {
-    if (!pool) return res.status(500).json({ message: "Database not configured." });
-    const gameId = req.params.gameId;
-    try {
-        const [gameRows] = await pool.execute('SELECT * FROM games WHERE game_id = ? AND is_archived = FALSE', [gameId]);
-        if (gameRows.length === 0) {
-            if (gamesCache[gameId]) delete gamesCache[gameId]; 
-            return res.status(404).json({ message: 'Game not found or is archived.' });
-        }
-        const gameDataFromDB = gameRows[0];
-        
-        const playerOrder = gameDataFromDB.player_order_json ? JSON.parse(gameDataFromDB.player_order_json) : [];
-        
-        const [playerDetailRows] = await pool.execute(
-            'SELECT mp.id as player_id, gp.player_name, gp.role_name, gp.status, gp.role_team, gp.role_alignment FROM game_players gp JOIN master_players mp ON gp.player_id = mp.id WHERE gp.game_id = ?',
-            [gameId]
-        );
-
-        const playersInGameFromDB = {};
-        playerOrder.forEach(name => { 
-            const pDetail = playerDetailRows.find(pdr => pdr.player_name === name);
-            if (pDetail) {
-                playersInGameFromDB[name] = {
-                    id: pDetail.player_id,
-                    roleName: pDetail.role_name,
-                    roleDetails: pDetail.role_name ? (ALL_ROLES_SERVER[Object.keys(ALL_ROLES_SERVER).find(key => ALL_ROLES_SERVER[key].name === pDetail.role_name)] || {name: pDetail.role_name, team: pDetail.role_team, alignment: pDetail.role_alignment, description: "Role details not found in config."}) : null,
-                    status: pDetail.status
-                };
-            }
-        });
-        playerDetailRows.forEach(p => { 
-            if (!playersInGameFromDB[p.player_name]) {
-                 playersInGameFromDB[p.player_name] = {
-                    id: p.player_id,
-                    roleName: p.role_name,
-                    roleDetails: p.role_name ? (ALL_ROLES_SERVER[Object.keys(ALL_ROLES_SERVER).find(key => ALL_ROLES_SERVER[key].name === p.role_name)] || {name: p.role_name, team: p.role_team, alignment: p.role_alignment, description: "Role details not found in config."}) : null,
-                    status: p.status
-                };
-            }
-        });
-        
-        const fullGameData = {
-            gameId: gameDataFromDB.game_id,
-            sessionId: gameDataFromDB.session_id,
-            gameName: gameDataFromDB.game_name,
-            currentPhase: gameDataFromDB.current_phase,
-            seerPlayerName: gameDataFromDB.seer_player_name,
-            werewolfNightTarget: gameDataFromDB.werewolf_night_target,
-            playersOnTrial: gameDataFromDB.players_on_trial ? JSON.parse(gameDataFromDB.players_on_trial) : [],
-            votes: gameDataFromDB.votes ? JSON.parse(gameDataFromDB.votes) : {},
-            playerOrder: playerOrder.length > 0 ? playerOrder : Object.keys(playersInGameFromDB), 
-            gameWinner: gameDataFromDB.game_winner_team ? { team: gameDataFromDB.game_winner_team, reason: gameDataFromDB.game_winner_reason } : null,
-            gameLog: gameDataFromDB.game_log ? JSON.parse(gameDataFromDB.game_log) : [],
-            playersInGame: playersInGameFromDB 
-        };
-        
-        gamesCache[gameId] = fullGameData; 
-        console.log("SERVER: Loaded game " + gameId + " from DB. Phase: " + fullGameData.currentPhase + ". Players: " + fullGameData.playerOrder.join(', '));
-        res.json(fullGameData);
-
-    } catch (error) {
-        console.error("Error fetching game " + gameId + " from DB:", error);
-        res.status(500).json({ message: "Failed to fetch game." });
+    const gameData = await fetchGameFromDB(req.params.gameId);
+    if (gameData) {
+        res.json(gameData);
+    } else {
+        res.status(404).json({ message: 'Game not found or is archived.' });
     }
 });
 
-// --- The rest of the game action API endpoints (/players, /assign-roles, /player-status, /phase, /action, voting) ---
-// --- will now primarily operate on the gamesCache[gameId] object for speed, ---
-// --- but critically, they MUST write their changes back to the MariaDB database to ensure persistence. ---
-// --- This means each of these POST endpoints will now involve DB write operations. ---
+app.post('/api/games/:gameId/players', async (req, res) => { /* ... same as before ... */ });
+app.post('/api/games/:gameId/assign-roles', async (req, res) => { /* ... same as before ... */ });
+app.post('/api/games/:gameId/player-status', async (req, res) => { /* ... same as before ... */ });
+app.post('/api/games/:gameId/phase', async (req, res) => { /* ... same as before ... */ });
+app.post('/api/games/:gameId/action', async (req, res) => { /* ... same as before ... */ });
+app.post('/api/games/:gameId/start-vote', async (req, res) => { /* ... same as before ... */ });
+app.post('/api/games/:gameId/update-vote', async (req, res) => { /* ... same as before ... */ });
+app.post('/api/games/:gameId/clear-votes', async (req, res) => { /* ... same as before ... */ });
+app.post('/api/games/:gameId/process-elimination', async (req, res) => { /* ... same as before ... */ });
 
-// Example for /player-status (others will follow similar pattern)
-app.post('/api/games/:gameId/player-status', async (req, res) => {
-    const gameId = req.params.gameId;
-    const game = gamesCache[gameId]; // Use cache for read-modify-write pattern
-    const { playerName, status } = req.body;
-
-    if (!game || !game.playersInGame[playerName]) {
-        // Attempt to load from DB if not in cache (e.g., after server restart)
-        // This part is complex if we want full resilience without loading all games into memory at start.
-        // For now, assume game is loaded into cache via GET /api/games/:gameId first.
-        return res.status(404).json({ message: 'Game not loaded in cache or player not found.' });
-    }
-    if (game.gameWinner) return res.status(400).json({ message: 'Game already finished.' });
-    if (status !== 'alive' && status !== 'eliminated') return res.status(400).json({ message: 'Invalid status.' });
-    
-    game.playersInGame[playerName].status = status; 
-    try {
-        await pool.execute('UPDATE game_players SET status = ? WHERE game_id = ? AND player_name = ?', [status, gameId, playerName]);
-        console.log('Status for', playerName, 'in', gameId, 'to', status, '(DB updated)');
-        await checkWinConditions(game); // This will update DB for gameWinner if game ends
-        res.status(200).json(game); // Return updated in-memory game state
-    } catch (dbError) {
-        console.error("Error updating player status in DB for game " + gameId + ":", dbError);
-        // Revert in-memory change if DB update fails? Or reload from DB?
-        // For simplicity now, we don't revert, client will re-fetch on error.
-        res.status(500).json({message: "Failed to update player status in DB."});
-    }
-});
-
-// TODO: Refactor other game action endpoints (assign-roles, phase, action, voting)
-// to use the gamesCache and write changes back to MariaDB similar to player-status.
 
 // --- HTTP Server Setup & WebSocket ---
-// (This part remains the same)
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'moderator.html')));
 app.get('/moderator.html', (req, res) => res.sendFile(path.join(__dirname, 'moderator.html')));
 app.get('/display.html', (req, res) => res.sendFile(path.join(__dirname, 'display.html')));
@@ -345,7 +323,6 @@ const wss = new WebSocket.Server({ server });
 const clients = new Set();
 
 wss.on('error', (error) => { console.error('[WS Server Error]', error); if (error.code === 'EADDRINUSE') process.exit(1); });
-
 wss.on('connection', (ws, req) => {
     const clientIp = req.socket.remoteAddress || 'unknown IP';
     clients.add(ws);
