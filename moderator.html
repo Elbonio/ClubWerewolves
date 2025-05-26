@@ -178,7 +178,7 @@
             <div id="moderatorLog" class="message-log-container p-3 bg-gray-600 rounded-lg text-sm space-y-1"></div>
         </div>
         <div class="mt-6 text-center text-xs text-gray-500">
-            Panel v0.10.5 / Server <span id="serverVersionDisplay">loading...</span>
+            Panel v0.10.7 / Server <span id="serverVersionDisplay">loading...</span>
         </div>
     </div>
 
@@ -203,7 +203,6 @@
         };
 
         document.addEventListener('DOMContentLoaded', () => {
-            // UI Elements
             const messageInput = document.getElementById('messageInput');
             const sendMessageBtn = document.getElementById('sendMessageBtn');
             const statusDiv = document.getElementById('status');
@@ -316,42 +315,827 @@
                     updateStatus('WS Connection error.', 'error');
                 }
             }
-            function updateStatus(message, type = 'info') { /* ... same as before ... */ }
-            function logToModerator(message, type = "Info") { /* ... same as before ... */ }
-            function sendWebSocketMessage(type, dataPayload) { /* ... same as before ... */ }
-            async function fetchFromServer(endpoint, options = {}) { /* ... same as before ... */ }
-            async function loadSessionsList() { /* ... same as before ... */ }
-            
-            createNewSessionBtn.addEventListener('click', async () => { /* ... same as before ... */ });
-            async function loadSpecificSession(sessionId) { /* ... same as before ... */ }
-            function updateUIAfterSessionLoad() { /* ... as before ... */ }
-            renameSessionBtn.addEventListener('click', async () => { /* ... same as before ... */ });
-            archiveSessionBtn.addEventListener('click', async () => { /* ... as before ... */ });
-            async function loadGamesListForSession(sessionId) { /* ... as before ... */ }
-            createNewGameInSessionBtn.addEventListener('click', async () => { /* ... as before ... */ });
-            archiveGameBtn.addEventListener('click', async () => { /* ... as before ... */ });
-            async function loadSpecificGame(gameId) { /* ... as before ... */ }
-            function updateUIAfterGameLoad(gameWinnerData = null) { /* ... as before ... */ }
-            function hideAllGameSpecificSections() { /* ... as before ... */ }
-            async function loadMasterPlayers() { /* ... as before ... */ }
-            addMasterPlayerBtn.addEventListener('click', async () => { /* ... as before ... */ });
-            function renderMasterPlayerSelectionForGame() { /* ... as before ... */ }
-            async function handlePlayerSelectionForGame(playerName, isSelected) { /* ... as before ... */ }
-            function renderPlayerListForCurrentGame() { /* ... as before ... */ }
-            assignRolesBtn.addEventListener('click', async () => { /* ... as before ... */ });
-            function renderAssignedRolesList() { /* ... as before ... */ }
-            startNightBtn.addEventListener('click', async () => { /* ... as before ... */ });
-            startDayBtn.addEventListener('click', async () => { /* ... as before ... */ });
-            function updateNightActionSelectors() { /* ... as before ... */ }
-            seerCheckTargetBtn.addEventListener('click', async () => { /* ... as before ... */ });
-            werewolfTargetBtn.addEventListener('click', async () => { /* ... as before ... */ });
-            function renderAlivePlayerSelectionForVote() { /* ... as before ... */ }
-            addAllAliveToVoteBtn.addEventListener('click', () => { /* ... as before ... */ });
-            startVoteBtn.addEventListener('click', async () => { /* ... as before ... */ });
-            function renderVoteTally() { /* ... as before ... */ }
-            async function updateVote(playerName, change) { /* ... as before ... */ }
-            clearAllVotesBtn.addEventListener('click', async () => { /* ... as before ... */ });
-            finalizeVoteBtn.addEventListener('click', async () => { /* ... as before ... */ });
+            function updateStatus(message, type = 'info') {
+                statusDiv.textContent = message;
+                statusDiv.className = 'p-3 rounded-lg text-sm ' + 
+                    (type === 'success' ? 'bg-green-700 text-green-100' : 
+                     type === 'error' ? 'bg-red-700 text-red-100' : 
+                     'bg-gray-600');
+            }
+            function logToModerator(message, type = "Info") {
+                 console.log('[' + type + '] ' + message); 
+                 const logEntry = document.createElement('div');
+                 logEntry.textContent = '[' + type + '] ' + message;
+                 logEntry.className = 'text-gray-300';
+                 moderatorLog.insertBefore(logEntry, moderatorLog.firstChild); 
+                 if (moderatorLog.children.length > 30) { 
+                     moderatorLog.removeChild(moderatorLog.lastChild);
+                 }
+            }
+            function sendWebSocketMessage(type, dataPayload) { 
+                logToModerator('Attempting to send WS message. Type: ' + type + ', Socket Ready: ' + (socket && socket.readyState === WebSocket.OPEN), 'Debug');
+                if (type !== 'moderator_message' && !currentLoadedGameId) {
+                     if (type === 'moderator_message') {} else {
+                        logToModerator("Cannot send WS message: No game loaded for type " + type, "Error");
+                        return; 
+                     }
+                }
+                if (socket && socket.readyState === WebSocket.OPEN) {
+                    const messageToSend = { type, gameId: currentLoadedGameId, ...dataPayload }; 
+                    socket.send(JSON.stringify(messageToSend));
+                    let logMessageContent = "details unavailable";
+                    if (dataPayload.content !== undefined) { logMessageContent = dataPayload.content; } 
+                    else if (dataPayload.payload) { const p = dataPayload.payload; logMessageContent = p.playerName || p.targetPlayerName || p.alignment || p.message || p.winningTeam || JSON.stringify(p); } 
+                    else { logMessageContent = JSON.stringify(dataPayload); }
+                    logToModerator(type + ': ' + logMessageContent, 'WS Sent');
+                } else {
+                    updateStatus('Not connected to WS. Cannot send message.', 'error');
+                    logToModerator('WS send failed: Socket not open or undefined.', 'Error');
+                }
+            }
+            async function fetchFromServer(endpoint, options = {}) {
+                try {
+                    const response = await fetch(endpoint, options);
+                    if (!response.ok) {
+                        const errorData = await response.json().catch(() => ({ message: response.statusText }));
+                        logToModerator('API Error (' + response.status + '): ' + (errorData.message || 'Unknown error') + ' at ' + endpoint, 'API Error');
+                        updateStatus('API request failed: ' + response.status, 'error');
+                        return null;
+                    }
+                    if (response.status === 204) return true; 
+                    return response.json();
+                } catch (error) {
+                    logToModerator(error.message, 'Fetch Error');
+                    updateStatus('Network or fetch error. Check console.', 'error');
+                    return null;
+                }
+            }
+            async function loadSessionsList() {
+                const sessions = await fetchFromServer('/api/sessions');
+                if (sessions) {
+                    localSessionList = sessions;
+                    existingSessionsListUL.innerHTML = ''; 
+                    if (sessions.length === 0) {
+                        existingSessionsListUL.innerHTML = '<li class="text-gray-400 italic">No sessions found. Create one!</li>';
+                    }
+                    sessions.forEach(session => {
+                        const li = document.createElement('li');
+                        li.textContent = session.session_name + ' (' + new Date(session.session_date).toLocaleDateString() + ')';
+                        li.dataset.sessionId = session.session_id;
+                        li.className = 'list-item hover:bg-gray-500 rounded';
+                        if (session.session_id === currentLoadedSessionId) {
+                            li.classList.add('selected-item');
+                        }
+                        li.onclick = () => loadSpecificSession(session.session_id);
+                        existingSessionsListUL.appendChild(li);
+                    });
+                }
+            }
+            createNewSessionBtn.addEventListener('click', async () => {
+                console.log("MODERATOR.HTML: Create New Session button clicked.");
+                const sessionName = newSessionNameInput.value.trim();
+                const sessionDate = newSessionDateInput.value;
+                if (!sessionName || !sessionDate) {
+                    logToModerator("Session name and date are required.", "Warning");
+                    return;
+                }
+                const newSession = await fetchFromServer('/api/sessions', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sessionName, sessionDate })
+                });
+                if (newSession && newSession.sessionId) {
+                    logToModerator('Created new session: ' + newSession.sessionName, 'System');
+                    newSessionNameInput.value = '';
+                    if(newSessionDateInput) newSessionDateInput.valueAsDate = new Date();
+                    await loadSessionsList(); 
+                    loadSpecificSession(newSession.sessionId); 
+                } else {
+                    logToModerator('Failed to create session or received invalid response.', 'Error');
+                }
+            });
+            async function loadSpecificSession(sessionId) {
+                logToModerator('Attempting to load session: ' + sessionId, 'System');
+                currentLoadedSessionId = sessionId;
+                const selectedSession = localSessionList.find(s => s.session_id === sessionId);
+                currentSessionInfo.textContent = 'Loaded Session: ' + (selectedSession ? selectedSession.session_name : sessionId);
+                sessionActions.classList.remove('hidden');
+                renameSessionInput.value = selectedSession ? selectedSession.session_name : '';
+                currentLoadedGameId = null;
+                currentGameInfoDisplay.textContent = 'No game loaded in this session.';
+                currentGamePhaseInfo.textContent = '';
+                hideAllGameSpecificSections(); 
+                await loadGamesListForSession(sessionId); 
+                updateUIAfterSessionLoad();
+            }
+            function updateUIAfterSessionLoad() {
+                if (currentLoadedSessionId) {
+                    gameManagementSection.classList.remove('hidden'); 
+                    Array.from(existingSessionsListUL.children).forEach(child => { 
+                        child.classList.remove('selected-item');
+                        if (child.dataset.sessionId === currentLoadedSessionId) {
+                            child.classList.add('selected-item');
+                        }
+                    });
+                } else {
+                    gameManagementSection.classList.add('hidden');
+                }
+            }
+            renameSessionBtn.addEventListener('click', async () => {
+                if (!currentLoadedSessionId) { logToModerator("No session loaded to rename.", "Error"); return; }
+                const newName = renameSessionInput.value.trim();
+                if (!newName) { logToModerator("New session name cannot be empty.", "Warning"); return; }
+                const result = await fetchFromServer('/api/sessions/' + currentLoadedSessionId, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sessionName: newName })
+                });
+                if (result) {
+                    logToModerator("Session renamed to: " + newName, "System");
+                    await loadSessionsList(); 
+                    const selectedSession = localSessionList.find(s => s.session_id === currentLoadedSessionId);
+                    currentSessionInfo.textContent = 'Loaded Session: ' + (selectedSession ? selectedSession.session_name : currentLoadedSessionId);
+                }
+            });
+            archiveSessionBtn.addEventListener('click', async () => {
+                if (!currentLoadedSessionId) { logToModerator("No session loaded to archive.", "Error"); return; }
+                if (!confirm("Are you sure you want to archive (hide) this session and all its games? This is reversible.")) { return; }
+                const result = await fetchFromServer('/api/sessions/' + currentLoadedSessionId, { method: 'DELETE' });
+                if (result) {
+                    logToModerator("Session archived.", "System");
+                    currentLoadedSessionId = null;
+                    currentSessionInfo.textContent = 'No session loaded.';
+                    sessionActions.classList.add('hidden');
+                    gameManagementSection.classList.add('hidden');
+                    hideAllGameSpecificSections();
+                    await loadSessionsList(); 
+                }
+            });
+            async function loadGamesListForSession(sessionId) {
+                if (!sessionId) {
+                    existingGamesInSessionListUL.innerHTML = '<li class="text-gray-400 italic">Load a session to see its games.</li>'; 
+                    return;
+                }
+                const games = await fetchFromServer('/api/sessions/' + sessionId + '/games');
+                if (games) {
+                    localGamesInCurrentSession = games; 
+                    existingGamesInSessionListUL.innerHTML = ''; 
+                    if (games.length === 0) {
+                        existingGamesInSessionListUL.innerHTML = '<li class="text-gray-400 italic">No games in this session. Create one!</li>';
+                    }
+                    games.forEach(game => {
+                        const li = document.createElement('li');
+                        let gameDisplayText = game.gameName + ' (Players: ' + game.playerCount + ', Phase: ' + game.currentPhase + ')';
+                        if (game.gameWinner && game.gameWinner.team) {
+                            gameDisplayText += ' - WINNER: ' + game.gameWinner.team;
+                        }
+                        li.textContent = gameDisplayText;
+                        li.dataset.gameId = game.gameId; 
+                        li.className = 'list-item hover:bg-gray-500 rounded';
+                        li.onclick = () => loadSpecificGame(game.gameId);
+                        existingGamesInSessionListUL.appendChild(li);
+                    });
+                }
+            }
+            createNewGameInSessionBtn.addEventListener('click', async () => { 
+                console.log("MODERATOR.HTML: Create New Game In Session button clicked.");
+                if (!currentLoadedSessionId) {
+                    logToModerator("No session loaded. Create or load a session first.", "Error");
+                    return;
+                }
+                const gameName = newGameInSessionNameInput.value.trim() || 'New Game ' + (localGamesInCurrentSession.length + 1);
+                const newGame = await fetchFromServer('/api/sessions/' + currentLoadedSessionId + '/games', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ gameName })
+                });
+                if (newGame && newGame.gameId) {
+                    logToModerator('Created new game: ' + newGame.gameName + ' in session ' + currentLoadedSessionId, 'System');
+                    newGameInSessionNameInput.value = '';
+                    await loadGamesListForSession(currentLoadedSessionId); 
+                    loadSpecificGame(newGame.gameId); 
+                } else {
+                     logToModerator('Failed to create game in session or received invalid response.', 'Error');
+                }
+            });
+            archiveGameBtn.addEventListener('click', async () => {
+                if (!currentLoadedGameId) { logToModerator("No game loaded to archive.", "Error"); return; }
+                if (!confirm("Are you sure you want to archive (hide) this game?")) { return; }
+                const result = await fetchFromServer('/api/games/' + currentLoadedGameId, { method: 'DELETE' });
+                if (result) {
+                    logToModerator("Game " + currentLoadedGameId + " archived.", "System");
+                    currentLoadedGameId = null;
+                    currentGameInfoDisplay.textContent = 'No game loaded.';
+                    currentGamePhaseInfo.textContent = '';
+                    hideAllGameSpecificSections();
+                    await loadGamesListForSession(currentLoadedSessionId); 
+                }
+            });
+            async function loadSpecificGame(gameId) {
+                logToModerator('Attempting to load game: ' + gameId, 'System');
+                const gameData = await fetchFromServer('/api/games/' + gameId);
+
+                if (gameData) {
+                    currentLoadedGameId = gameId;
+                    currentGameInfoDisplay.textContent = 'Loaded Game: ' + gameData.gameName + ' (ID: ' + gameId + ')';
+                    gameActions.classList.remove('hidden');
+                    
+                    playersInCurrentGame = gameData.playerOrder || [];
+                    gameRoles = gameData.playersInGame || {}; 
+                    currentPhase = gameData.currentPhase || 'setup';
+                    playersOnTrialForVote = gameData.playersOnTrial || [];
+                    currentVotes = gameData.votes || {};
+                    
+                    logToModerator('Successfully loaded game state for ' + gameData.gameName + ' - Phase: ' + currentPhase, 'System');
+                    updateUIAfterGameLoad(gameData.gameWinner); 
+                } else {
+                    logToModerator('Failed to load game data for ' + gameId, 'Error');
+                    currentGameInfoDisplay.textContent = 'Failed to load game: ' + gameId;
+                    currentLoadedGameId = null;
+                    hideAllGameSpecificSections();
+                }
+            }
+            function updateUIAfterGameLoad(gameWinnerData = null) {
+                if (!currentLoadedGameId) {
+                    hideAllGameSpecificSections();
+                    currentGamePhaseInfo.textContent = '';
+                    gameOverMessage.classList.add('hidden');
+                    return;
+                }
+
+                currentGamePhaseInfo.textContent = 'Current Phase: ' + currentPhase.charAt(0).toUpperCase() + currentPhase.slice(1).replace('_', ' ');
+
+                const gameIsFinished = (gameWinnerData && gameWinnerData.team) || currentPhase === 'finished';
+
+                if (gameIsFinished) {
+                    gameOverMessage.textContent = "GAME OVER! " + (gameWinnerData?.team || "Team") + " wins! Reason: " + (gameWinnerData?.reason || "Win condition met.");
+                    gameOverMessage.classList.remove('hidden');
+                    currentGameSpecificsSection.classList.add('hidden'); 
+                } else {
+                    gameOverMessage.classList.add('hidden');
+                    currentGameSpecificsSection.classList.remove('hidden'); 
+                }
+                
+                if (!gameIsFinished) {
+                    currentGameSetupSection.classList.remove('hidden');
+                    currentRoleAssignmentSection.classList.remove('hidden');
+                    
+                    renderMasterPlayerSelectionForGame(); 
+                    renderPlayerListForCurrentGame();
+                    renderAssignedRolesList(); 
+                    
+                    const rolesAreAssigned = playersInCurrentGame.length > 0 && 
+                                             playersInCurrentGame.every(pName => gameRoles[pName] && gameRoles[pName].roleName);
+
+                    if (rolesAreAssigned) {
+                        gamePhaseSection.classList.remove('hidden');
+                        manualRevealSection.classList.remove('hidden');
+                        assignedRolesContainer.classList.remove('hidden'); 
+                        
+                        if (currentPhase === 'night') {
+                            nightActionsSection.classList.remove('hidden');
+                            votingSection.classList.add('hidden');
+                        } else if (currentPhase === 'day' || currentPhase === 'voting') {
+                            nightActionsSection.classList.add('hidden');
+                            votingSection.classList.remove('hidden');
+                            renderAlivePlayerSelectionForVote();
+                            if (currentPhase === 'voting') {
+                                setupVoteContainer.classList.add('hidden');
+                                activeVotingContainer.classList.remove('hidden');
+                                renderVoteTally();
+                            } else { 
+                                setupVoteContainer.classList.remove('hidden');
+                                activeVotingContainer.classList.add('hidden');
+                            }
+                        } else { 
+                            nightActionsSection.classList.add('hidden');
+                            votingSection.classList.add('hidden');
+                        }
+                    } else { 
+                        gamePhaseSection.classList.add('hidden');
+                        nightActionsSection.classList.add('hidden');
+                        manualRevealSection.classList.add('hidden');
+                        assignedRolesContainer.classList.add('hidden'); 
+                        votingSection.classList.add('hidden');
+                    }
+                    updateNightActionSelectors();
+                } else { 
+                     gamePhaseSection.classList.add('hidden');
+                     nightActionsSection.classList.add('hidden');
+                     manualRevealSection.classList.add('hidden');
+                     votingSection.classList.add('hidden');
+                     if(currentRoleAssignmentSection) currentRoleAssignmentSection.classList.remove('hidden'); 
+                     if(assignRolesBtn) assignRolesBtn.disabled = true; 
+                     if (assignedRolesContainer) assignedRolesContainer.classList.remove('hidden'); 
+                }
+
+
+                Array.from(existingGamesInSessionListUL.children).forEach(child => {
+                    child.classList.remove('selected-item');
+                    if (child.dataset.gameId === currentLoadedGameId) {
+                        child.classList.add('selected-item');
+                    }
+                });
+            }
+            function hideAllGameSpecificSections() {
+                currentGameSpecificsSection.classList.add('hidden');
+                gameOverMessage.classList.add('hidden');
+                currentGamePhaseInfo.textContent = '';
+                 if(assignRolesBtn) assignRolesBtn.disabled = false; 
+            }
+            async function loadMasterPlayers() {
+                const playersData = await fetchFromServer('/api/master-players');
+                if (playersData) {
+                    localMasterPlayers = playersData; 
+                    masterPlayerDisplayList.innerHTML = '';
+                     if (localMasterPlayers.length === 0) {
+                        masterPlayerDisplayList.innerHTML = '<li class="text-gray-400 italic">No players in master list.</li>';
+                    }
+                    localMasterPlayers.forEach(player => {
+                        const li = document.createElement('li');
+                        li.textContent = player.name; 
+                        masterPlayerDisplayList.appendChild(li);
+                    });
+                    renderMasterPlayerSelectionForGame(); 
+                }
+            }
+            addMasterPlayerBtn.addEventListener('click', async () => {
+                const playerName = masterPlayerNameInput.value.trim();
+                if (playerName) {
+                    const result = await fetchFromServer('/api/master-players', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ name: playerName })
+                    });
+                    if (result) {
+                        logToModerator(playerName + ' added to master list.', 'System');
+                        masterPlayerNameInput.value = '';
+                        loadMasterPlayers(); 
+                    }
+                }
+            });
+            function renderMasterPlayerSelectionForGame() {
+                masterPlayerSelectionForGame.innerHTML = '';
+                if (!currentLoadedGameId) return; 
+
+                if (localMasterPlayers.length === 0) {
+                     masterPlayerSelectionForGame.innerHTML = '<p class="text-gray-400 italic">Add players to the Master List first.</p>';
+                     return;
+                }
+                localMasterPlayers.forEach(player => { 
+                    const div = document.createElement('div');
+                    div.className = 'flex items-center gap-2 p-1';
+                    const checkbox = document.createElement('input');
+                    checkbox.type = 'checkbox';
+                    checkbox.id = 'masterPlayerSelect-' + player.id + '-' + currentLoadedGameId; 
+                    checkbox.value = player.name; 
+                    checkbox.dataset.playerId = player.id; 
+                    checkbox.className = 'form-checkbox h-5 w-5 text-purple-600 bg-gray-700 border-gray-500 rounded focus:ring-purple-500';
+                    
+                    checkbox.checked = playersInCurrentGame.includes(player.name);
+                    
+                    checkbox.onchange = (event) => handlePlayerSelectionForGame(event.target.value, event.target.checked);
+                    
+                    const label = document.createElement('label');
+                    label.htmlFor = checkbox.id;
+                    label.textContent = player.name;
+                    
+                    div.appendChild(checkbox);
+                    div.appendChild(label);
+                    masterPlayerSelectionForGame.appendChild(div);
+                });
+            }
+            async function handlePlayerSelectionForGame(playerName, isSelected) {
+                if (!currentLoadedGameId) {
+                    logToModerator("No game loaded to add/remove players.", "Error");
+                    return;
+                }
+                let updatedPlayerListNames = [...playersInCurrentGame];
+                if (isSelected) {
+                    if (!updatedPlayerListNames.includes(playerName)) {
+                        updatedPlayerListNames.push(playerName);
+                    }
+                } else {
+                    updatedPlayerListNames = updatedPlayerListNames.filter(p => p !== playerName);
+                }
+
+                const result = await fetchFromServer('/api/games/' + currentLoadedGameId + '/players', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ players: updatedPlayerListNames }) 
+                });
+
+                if (result) { 
+                    logToModerator('Player list for game ' + currentLoadedGameId + ' update sent to server.', 'System');
+                    await loadSpecificGame(currentLoadedGameId);
+                } else {
+                    logToModerator('Failed to update player list on server.', 'Error');
+                    loadSpecificGame(currentLoadedGameId); 
+                }
+            }
+            function renderPlayerListForCurrentGame() {
+                playerList.innerHTML = playersInCurrentGame.length > 0 
+                    ? playersInCurrentGame.map(name => '<li class="text-white">' + name + '</li>').join('') 
+                    : '<li class="text-gray-400 italic">No players selected for this game yet. Add them from the Master List above.</li>';
+            }
+            assignRolesBtn.addEventListener('click', async () => {
+                if (!currentLoadedGameId) { logToModerator("No game loaded.", "Error"); return; }
+                if (playersInCurrentGame.length === 0) { logToModerator("Add players to the game first.", "Warning"); return; }
+
+                logToModerator("Requesting server to assign roles for game " + currentLoadedGameId, "System");
+                const assignmentResult = await fetchFromServer('/api/games/' + currentLoadedGameId + '/assign-roles', {
+                    method: 'POST' 
+                });
+
+                if (assignmentResult) {
+                    logToModerator("Roles assigned by server.", "System");
+                    await loadSpecificGame(currentLoadedGameId); 
+                    sendWebSocketMessage('moderator_message', { content: "Game '" + (localGameList.find(g=>g.gameId === currentLoadedGameId)?.gameName || currentLoadedGameId) + "' roles assigned." });
+                } else {
+                    logToModerator("Failed to assign roles on server.", "Error");
+                }
+            });
+            function renderAssignedRolesList() {
+                assignedRolesList.innerHTML = '';
+                if (Object.keys(gameRoles).length === 0 && playersInCurrentGame.length > 0) {
+                    assignedRolesList.innerHTML = '<li class="text-gray-400 italic">Roles not assigned yet. Click "Assign Roles".</li>';
+                    assignedRolesContainer.classList.add('hidden');
+                    return;
+                }
+                if (playersInCurrentGame.length === 0) {
+                     assignedRolesList.innerHTML = '<li class="text-gray-400 italic">No players in this game.</li>';
+                     assignedRolesContainer.classList.add('hidden');
+                     return;
+                }
+                
+                let rolesActuallyAssigned = false;
+                playersInCurrentGame.forEach(playerName => { 
+                    const playerData = gameRoles[playerName];
+                    if (!playerData || !playerData.roleName) { 
+                        const li = document.createElement('li');
+                        li.className = 'player-list-item text-yellow-400 italic';
+                        li.textContent = playerName + " (Role pending assignment)";
+                        assignedRolesList.appendChild(li);
+                        return;
+                    }
+                    rolesActuallyAssigned = true; 
+
+                    const li = document.createElement('li');
+                    li.className = 'player-list-item';
+                    const nameSpan = document.createElement('span');
+                    nameSpan.textContent = playerName + " (" + playerData.roleName + ")"; 
+                    nameSpan.className = playerData.status === 'eliminated' ? 'player-name-eliminated' : 'text-gray-200';
+
+                    const buttonContainer = document.createElement('div');
+                    buttonContainer.className = 'flex gap-2';
+
+                    const showRoleBtn = document.createElement('button');
+                    showRoleBtn.textContent = 'Show Role';
+                    showRoleBtn.className = 'bg-indigo-500 hover:bg-indigo-600 text-white text-xs font-semibold py-1 px-2 rounded-md transition';
+                    showRoleBtn.onclick = () => sendWebSocketMessage('show_specific_role', { 
+                        payload: { playerName, roleName: playerData.roleName, roleDescription: playerData.roleDetails.description, team: playerData.roleDetails.team } 
+                    });
+                    buttonContainer.appendChild(showRoleBtn);
+
+                    if (playerData.status === 'alive') {
+                        const eliminateBtn = document.createElement('button');
+                        eliminateBtn.textContent = 'Eliminate';
+                        eliminateBtn.className = 'bg-red-500 hover:bg-red-600 text-white text-xs font-semibold py-1 px-2 rounded-md transition';
+                        eliminateBtn.onclick = async () => {
+                            if (window.confirm("Manually eliminate " + playerName + "?")) {
+                                const statusUpdate = await fetchFromServer('/api/games/' + currentLoadedGameId + '/player-status', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ playerName, status: 'eliminated' })
+                                });
+                                if (statusUpdate) {
+                                    logToModerator(playerName + " manually eliminated (server updated).", "Elimination");
+                                    sendWebSocketMessage('player_eliminated', { payload: { playerName: playerName, source: 'manual' } }); 
+                                    loadSpecificGame(currentLoadedGameId); 
+                                }
+                            }
+                        };
+                        buttonContainer.appendChild(eliminateBtn);
+                    } else { 
+                        const reviveBtn = document.createElement('button');
+                        reviveBtn.textContent = 'Revive';
+                        reviveBtn.className = 'bg-green-500 hover:bg-green-600 text-white text-xs font-semibold py-1 px-2 rounded-md transition';
+                        reviveBtn.onclick = async () => {
+                             if (window.confirm("Revive " + playerName + "?")) {
+                                const statusUpdate = await fetchFromServer('/api/games/' + currentLoadedGameId + '/player-status', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ playerName, status: 'alive' })
+                                });
+                                if (statusUpdate) {
+                                    logToModerator(playerName + " revived (server updated).", "Status Change");
+                                    loadSpecificGame(currentLoadedGameId); 
+                                }
+                            }
+                        };
+                        buttonContainer.appendChild(reviveBtn);
+                    }
+                    li.appendChild(nameSpan);
+                    li.appendChild(buttonContainer);
+                    assignedRolesList.appendChild(li);
+                });
+
+                if (rolesActuallyAssigned) {
+                    assignedRolesContainer.classList.remove('hidden');
+                } else {
+                    assignedRolesContainer.classList.add('hidden');
+                }
+            }
+            startNightBtn.addEventListener('click', async () => {
+                if (!currentLoadedGameId) { logToModerator("No game loaded.", "Error"); return; }
+                const phaseUpdate = await fetchFromServer('/api/games/' + currentLoadedGameId + '/phase', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phase: 'night' })
+                });
+                if (phaseUpdate) {
+                    logToModerator("Night phase started (server updated).", "Phase");
+                    if (!phaseUpdate.gameWinner || !phaseUpdate.gameWinner.team) { 
+                        sendWebSocketMessage('game_phase_change', { payload: { phase: 'night', message: "Night has fallen. Everyone, close your eyes." } });
+                    }
+                    await loadSpecificGame(currentLoadedGameId); 
+                }
+            });
+            startDayBtn.addEventListener('click', async () => {
+                if (!currentLoadedGameId) { logToModerator("No game loaded.", "Error"); return; }
+                const phaseUpdate = await fetchFromServer('/api/games/' + currentLoadedGameId + '/phase', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phase: 'day' }) 
+                });
+
+                if (phaseUpdate) { 
+                    logToModerator("Day phase processing complete (server updated). Elim Result: " + JSON.stringify(phaseUpdate.eliminationResult), "Phase");
+                    if (!phaseUpdate.gameWinner || !phaseUpdate.gameWinner.team) { 
+                        const daybreakPayload = {
+                            phase: 'day',
+                            message: "Daybreak! Open your eyes and discuss.",
+                            eliminatedPlayer: phaseUpdate.eliminationResult?.eliminatedPlayerName, 
+                            specialInfo: phaseUpdate.eliminationResult?.specialInfo 
+                        };
+                        sendWebSocketMessage('game_phase_change', { payload: daybreakPayload });
+                    }
+                    await loadSpecificGame(currentLoadedGameId); 
+                }
+            });
+            function updateNightActionSelectors() {
+                if (!currentLoadedGameId || Object.keys(gameRoles).length === 0 || currentPhase !== 'night') {
+                    seerActionContainer.classList.add('hidden');
+                    werewolfActionContainer.classList.add('hidden');
+                    return;
+                }
+                const alivePlayersForCurrentGame = playersInCurrentGame.filter(p => gameRoles[p] && gameRoles[p].status === 'alive');
+                
+                const currentSeerNameInGame = playersInCurrentGame.find(pName => gameRoles[pName] && gameRoles[pName].roleName === "Seer" && gameRoles[pName].status === 'alive');
+
+                if (currentSeerNameInGame) {
+                    seerActionContainer.classList.remove('hidden');
+                    seerTargetSelect.innerHTML = ''; 
+                    const seerTargets = alivePlayersForCurrentGame.filter(p => p !== currentSeerNameInGame);
+                    if (seerTargets.length > 0) {
+                        seerTargets.forEach(pName => {
+                            const option = document.createElement('option'); option.value = pName; option.textContent = pName; seerTargetSelect.appendChild(option);
+                        });
+                        seerCheckTargetBtn.disabled = false;
+                    } else {
+                        seerTargetSelect.innerHTML = '<option value="">No other alive players</option>'; seerCheckTargetBtn.disabled = true;
+                    }
+                } else {
+                    seerActionContainer.classList.add('hidden');
+                }
+
+                const aliveWerewolvesCount = alivePlayersForCurrentGame.filter(p => gameRoles[p] && gameRoles[p].roleName === "Werewolf").length;
+                if (aliveWerewolvesCount > 0) {
+                    werewolfActionContainer.classList.remove('hidden');
+                    werewolfTargetSelect.innerHTML = '';
+                    const werewolfTargets = alivePlayersForCurrentGame.filter(p => gameRoles[p] && gameRoles[p].roleName !== "Werewolf"); 
+                     if (werewolfTargets.length > 0) {
+                        werewolfTargets.forEach(pName => {
+                            const option = document.createElement('option'); option.value = pName; option.textContent = pName; werewolfTargetSelect.appendChild(option);
+                        });
+                        werewolfTargetBtn.disabled = false;
+                    } else {
+                        werewolfTargetSelect.innerHTML = '<option value="">No non-werewolves</option>'; werewolfTargetBtn.disabled = true;
+                    }
+                } else {
+                    werewolfActionContainer.classList.add('hidden');
+                }
+            }
+            seerCheckTargetBtn.addEventListener('click', async () => {
+                if (!currentLoadedGameId) return;
+                const targetPlayerName = seerTargetSelect.value;
+                if (!targetPlayerName) { logToModerator("No target for Seer.", "Warning"); return; }
+
+                const seerResult = await fetchFromServer('/api/games/' + currentLoadedGameId + '/action', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ actionType: 'seerCheck', targetPlayerName })
+                });
+
+                if (seerResult && seerResult.alignmentMessage) {
+                    logToModerator("Seer checks " + targetPlayerName + ". Server Result: " + seerResult.alignmentMessage, "Seer");
+                    sendWebSocketMessage('seer_check_result', { payload: { targetPlayerName, alignmentMessage: seerResult.alignmentMessage } });
+                } else {
+                    logToModerator("Failed to get Seer result from server for " + targetPlayerName, "Error");
+                }
+            });
+            werewolfTargetBtn.addEventListener('click', async () => {
+                if (!currentLoadedGameId) return;
+                const targetPlayerName = werewolfTargetSelect.value;
+                if (!targetPlayerName) { logToModerator("No target by werewolves.", "Warning"); return; }
+                
+                const targetResult = await fetchFromServer('/api/games/' + currentLoadedGameId + '/action', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ actionType: 'werewolfTarget', targetPlayerName })
+                });
+
+                if (targetResult) { 
+                    logToModerator("Werewolves targeted: " + targetPlayerName + " (server updated).", "Werewolf Action");
+                    sendWebSocketMessage('moderator_message', { content: "The werewolves have chosen their target..." });
+                } else {
+                     logToModerator("Failed to record werewolf target on server for " + targetPlayerName, "Error");
+                }
+            });
+            function renderAlivePlayerSelectionForVote() {
+                alivePlayerSelectionForVote.innerHTML = '';
+                if (!currentLoadedGameId || (currentPhase !== 'day' && currentPhase !== 'voting')) {
+                    votingSection.classList.add('hidden');
+                    return;
+                }
+                
+                votingSection.classList.remove('hidden'); 
+
+                const alivePlayersForVote = playersInCurrentGame.filter(p => gameRoles[p] && gameRoles[p].status === 'alive');
+                if (alivePlayersForVote.length === 0) {
+                    alivePlayerSelectionForVote.innerHTML = '<p class="text-gray-400 italic">No alive players to vote for.</p>';
+                    return;
+                }
+                alivePlayersForVote.forEach(playerName => {
+                    const div = document.createElement('div');
+                    div.className = "flex items-center my-1";
+                    const checkbox = document.createElement('input');
+                    checkbox.type = 'checkbox';
+                    checkbox.id = 'voteSelect-' + playerName.replace(/\s+/g, '-');
+                    checkbox.value = playerName;
+                    checkbox.className = 'form-checkbox h-4 w-4 text-purple-600 bg-gray-700 border-gray-500 rounded focus:ring-purple-500 mr-2';
+                    const label = document.createElement('label');
+                    label.htmlFor = checkbox.id;
+                    label.textContent = playerName;
+                    div.appendChild(checkbox);
+                    div.appendChild(label);
+                    alivePlayerSelectionForVote.appendChild(div);
+                });
+            }
+            addAllAliveToVoteBtn.addEventListener('click', () => {
+                Array.from(alivePlayerSelectionForVote.querySelectorAll('input[type="checkbox"]')).forEach(cb => cb.checked = true);
+            });
+            startVoteBtn.addEventListener('click', async () => {
+                if (!currentLoadedGameId) { logToModerator("No game loaded.", "Error"); return; }
+                const selectedForTrial = Array.from(alivePlayerSelectionForVote.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
+                if (selectedForTrial.length === 0) {
+                    logToModerator("No players selected for trial.", "Warning");
+                    return;
+                }
+                const result = await fetchFromServer('/api/games/' + currentLoadedGameId + '/start-vote', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ playerNamesOnTrial: selectedForTrial })
+                });
+                if (result) {
+                    logToModerator("Voting started for: " + selectedForTrial.join(', '), "Voting");
+                    sendWebSocketMessage('voting_update', { payload: { gameId: currentLoadedGameId, playersOnTrial: result.playersOnTrial || [], votes: result.votes || {} } });
+                    await loadSpecificGame(currentLoadedGameId); 
+                }
+            });
+            function renderVoteTally() {
+                voteTallyDisplay.innerHTML = '';
+                if (!currentLoadedGameId || currentPhase !== 'voting' || playersOnTrialForVote.length === 0) {
+                    activeVotingContainer.classList.add('hidden');
+                    if (currentPhase === 'day') setupVoteContainer.classList.remove('hidden'); 
+                    return;
+                }
+                setupVoteContainer.classList.add('hidden');
+                activeVotingContainer.classList.remove('hidden');
+
+                let maxVotes = 0;
+                if (Object.values(currentVotes).length > 0) {
+                    maxVotes = Math.max(...Object.values(currentVotes).map(v => Number(v)), 0);
+                }
+                
+                playersOnTrialForVote.forEach(playerName => {
+                    const votes = currentVotes[playerName] || 0;
+                    const itemDiv = document.createElement('div');
+                    itemDiv.className = 'vote-item p-2 rounded ' + (votes > 0 && votes === maxVotes ? 'leading-vote bg-yellow-700' : 'bg-gray-600');
+
+                    const nameSpan = document.createElement('span');
+                    nameSpan.textContent = playerName;
+                    nameSpan.className = 'font-medium mr-2 w-1/3 truncate';
+                    
+                    const voteBarContainer = document.createElement('div');
+                    voteBarContainer.className = 'vote-bar-container w-1/3';
+                    const voteBar = document.createElement('div');
+                    voteBar.className = 'vote-bar';
+                    const barWidthPercentage = maxVotes > 0 ? (votes / maxVotes) * 100 : 0; 
+                    voteBar.style.width = Math.min(barWidthPercentage, 100) + '%'; 
+                    voteBar.textContent = votes;
+                    voteBarContainer.appendChild(voteBar);
+
+                    const voteButtonsDiv = document.createElement('div');
+                    voteButtonsDiv.className = 'flex gap-1 w-1/3 justify-end';
+                    const plusBtn = document.createElement('button');
+                    plusBtn.textContent = '+1';
+                    plusBtn.className = 'bg-green-500 hover:bg-green-600 text-white font-bold py-1 px-2 rounded text-xs';
+                    plusBtn.onclick = () => updateVote(playerName, 1);
+                    const minusBtn = document.createElement('button');
+                    minusBtn.textContent = '-1';
+                    minusBtn.className = 'bg-red-500 hover:bg-red-600 text-white font-bold py-1 px-2 rounded text-xs';
+                    minusBtn.onclick = () => updateVote(playerName, -1);
+                    
+                    voteButtonsDiv.appendChild(minusBtn);
+                    voteButtonsDiv.appendChild(plusBtn);
+                    
+                    itemDiv.appendChild(nameSpan);
+                    itemDiv.appendChild(voteBarContainer);
+                    itemDiv.appendChild(voteButtonsDiv);
+                    voteTallyDisplay.appendChild(itemDiv);
+                });
+                sendWebSocketMessage('voting_update', { payload: { gameId: currentLoadedGameId, playersOnTrial: playersOnTrialForVote, votes: currentVotes } });
+            }
+            async function updateVote(playerName, change) {
+                if (!currentLoadedGameId) return;
+                const result = await fetchFromServer('/api/games/' + currentLoadedGameId + '/update-vote', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ playerName, change })
+                });
+                if (result && result.votes) {
+                    currentVotes = result.votes; 
+                    logToModerator("Vote for " + playerName + (change > 0 ? ' increased.' : ' decreased.'), "Voting");
+                    renderVoteTally(); 
+                } else {
+                     logToModerator("Failed to update vote for " + playerName, "Error");
+                }
+            }
+            clearAllVotesBtn.addEventListener('click', async () => {
+                if (!currentLoadedGameId) return;
+                if (!confirm("Are you sure you want to clear all current votes?")) return;
+                const result = await fetchFromServer('/api/games/' + currentLoadedGameId + '/clear-votes', { method: 'POST' });
+                if (result) {
+                    logToModerator("All votes cleared.", "Voting");
+                    await loadSpecificGame(currentLoadedGameId); 
+                }
+            });
+            finalizeVoteBtn.addEventListener('click', async () => {
+                if (!currentLoadedGameId) return;
+                let eliminatedPlayerName = null;
+                let maxVotes = -1;
+                let playersWithMaxVotes = [];
+
+                Object.entries(currentVotes).forEach(([player, votes]) => {
+                    if (votes > maxVotes) {
+                        maxVotes = votes;
+                        playersWithMaxVotes = [player];
+                    } else if (votes === maxVotes && maxVotes > 0) { 
+                        playersWithMaxVotes.push(player);
+                    }
+                });
+
+                if (playersWithMaxVotes.length === 1 && maxVotes > 0) { 
+                    if (confirm("Eliminate " + playersWithMaxVotes[0] + " (Most votes: " + maxVotes + ")?")) {
+                        eliminatedPlayerName = playersWithMaxVotes[0];
+                    } else if (!confirm("Proceed without elimination and return to day phase?")) { return; }
+                } else if (playersWithMaxVotes.length > 1) { 
+                    const chosen = prompt("TIE: " + playersWithMaxVotes.join(' & ') + " have " + maxVotes + " votes. Enter one name to eliminate, or leave blank to not eliminate anyone:");
+                    if (chosen && playersWithMaxVotes.includes(chosen.trim())) {
+                        eliminatedPlayerName = chosen.trim();
+                    } else if (chosen) { alert("Invalid player name for tie-breaker."); return; }
+                    else if (!confirm("No tie-breaker chosen. Return to day phase without elimination?")) { return; }
+                } else { 
+                     if (!confirm("No player has a majority of votes or no votes cast. Return to day phase without elimination?")) { return; }
+                }
+
+                const result = await fetchFromServer('/api/games/' + currentLoadedGameId + '/process-elimination', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ eliminatedPlayerName }) 
+                });
+
+                if (result) {
+                    logToModerator("Vote processed. Eliminated: " + (eliminatedPlayerName || "None"), "Voting");
+                    if (eliminatedPlayerName && (!result.gameWinner || !result.gameWinner.team) ) { 
+                        sendWebSocketMessage('player_eliminated', { payload: { gameId: currentLoadedGameId, playerName: eliminatedPlayerName, source: 'vote' } });
+                    } else if (!eliminatedPlayerName && (!result.gameWinner || !result.gameWinner.team)) {
+                        sendWebSocketMessage('moderator_message', { gameId: currentLoadedGameId, content: "No one was eliminated by vote. Discussion continues." });
+                    }
+                    await loadSpecificGame(currentLoadedGameId); 
+                }
+            });
             
             sendMessageBtn.addEventListener('click', () => {
                 logToModerator("Send Message button clicked.", "Debug");
