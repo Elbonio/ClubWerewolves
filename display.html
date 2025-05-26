@@ -55,7 +55,7 @@
             <div id="status" class="p-3 bg-gray-700 rounded-lg text-sm">Connecting to server...</div>
         </div>
          <div class="mt-6 text-center text-xs text-gray-500">
-            Display v0.10.0
+            Display v0.10.1
         </div>
     </div>
 
@@ -66,6 +66,7 @@
             const displayTitle = document.getElementById('displayTitle');
             let socket;
             let gameHasEnded = false; 
+            let currentDisplayGameId = null; // To track which game's updates to show
 
             function connect() {
                 const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -76,6 +77,7 @@
                     statusDiv.textContent = 'Connected to server.';
                     statusDiv.className = 'p-3 bg-green-700 text-green-100 rounded-lg text-sm';
                     gameHasEnded = false; 
+                    currentDisplayGameId = null; // Reset on new connection
                 };
 
                 socket.onmessage = function(event) {
@@ -90,28 +92,27 @@
                         return;
                     }
 
-                    // Filter messages by gameId if present and relevant
-                    // This is a simple example; a more robust system might have clients "subscribe" to a gameId
-                    if (messageData.gameId && window.currentLoadedGameIdOnDisplay && messageData.gameId !== window.currentLoadedGameIdOnDisplay && messageData.type !== 'game_over' && messageData.type !== 'moderator_message') {
-                        console.log("Display: Ignoring message for different gameId " + messageData.gameId);
-                        return;
+                    // If the message has a gameId, and it's different from the current one,
+                    // it means the moderator might have switched games. Reset gameHasEnded.
+                    if (messageData.gameId && messageData.gameId !== currentDisplayGameId) {
+                        console.log("DISPLAY.HTML: New game context received: " + messageData.gameId);
+                        currentDisplayGameId = messageData.gameId;
+                        gameHasEnded = false; // Reset for the new game context
                     }
-
-
+                    
                     if (gameHasEnded && messageData.type !== 'game_over' && messageData.type !== 'moderator_message') {
-                        console.log("DISPLAY.HTML: Game has ended, ignoring message type: " + messageData.type);
-                        return; 
+                        // If a game_over message for *this* game has been processed, ignore other updates for *this* game.
+                        // General moderator messages are still allowed.
+                        if (messageData.gameId === currentDisplayGameId) {
+                            console.log("DISPLAY.HTML: Game " + currentDisplayGameId + " has ended, ignoring message type: " + messageData.type);
+                            return; 
+                        }
                     }
+
                     if (messageData.type === 'game_over') {
                          gameHasEnded = true; 
+                         currentDisplayGameId = messageData.gameId; // Make sure we are tracking the ended game
                          console.log("DISPLAY.HTML: Game over flag SET for game " + messageData.gameId);
-                         window.currentLoadedGameIdOnDisplay = messageData.gameId; // Ensure we show game over for this game
-                    } else if (messageData.gameId) {
-                        // If it's not a game_over message, but it has a gameId,
-                        // assume this is the new "active" game for this display.
-                        // This helps if the moderator switches games.
-                        window.currentLoadedGameIdOnDisplay = messageData.gameId;
-                        gameHasEnded = false; // Reset if a new game context message arrives
                     }
 
 
