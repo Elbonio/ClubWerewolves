@@ -21,9 +21,9 @@
         @keyframes fadeIn { to { opacity: 1; transform: translateY(0); } }
         
         .phase-message { font-size: 2.8rem; font-weight: 600; margin-bottom: 1rem;}
-        .elimination-message { font-size: 3rem; font-weight: bold; color: #ef4444; /* Red for elimination */ margin-bottom: 0.5rem; }
-        .eliminated-player-name { font-size: 3.5rem; color: #f87171; /* Lighter red */ }
-        .special-info-message { font-size: 2.5rem; color: #facc15; /* Yellow for special info */ margin-bottom: 1rem; }
+        .elimination-message { font-size: 3rem; font-weight: bold; color: #ef4444; margin-bottom: 0.5rem; }
+        .eliminated-player-name { font-size: 3.5rem; color: #f87171; }
+        .special-info-message { font-size: 2.5rem; color: #facc15; margin-bottom: 1rem; }
         .game-over-message { font-size: 4rem; font-weight: bold; color: #fde047; }
         .winning-team-message { font-size: 3rem; color: #a7f3d0; margin-top: 0.5rem; }
 
@@ -41,7 +41,7 @@
         .vote-player-name-display { font-size: 1.8rem; color: #e0e7ff; }
         .vote-bar-display-container { width: 80%; background-color: #4A5568; border-radius: 0.25rem; height: 25px; margin-top: 0.25rem; overflow: hidden; border: 1px solid #374151;}
         .vote-bar-display { background-color: #60A5FA; height: 100%; text-align: center; line-height:25px; color: white; font-size: 1rem; white-space: nowrap; transition: width 0.3s ease-in-out;}
-        .leading-vote-display .vote-bar-display-container { border: 2px solid #FBBF24; } /* Highlight leading vote */
+        .leading-vote-display .vote-bar-display-container { border: 2px solid #FBBF24; } 
     </style>
 </head>
 <body class="bg-gray-900 text-white min-h-screen flex flex-col items-center justify-center p-6">
@@ -55,7 +55,7 @@
             <div id="status" class="p-3 bg-gray-700 rounded-lg text-sm">Connecting to server...</div>
         </div>
          <div class="mt-6 text-center text-xs text-gray-500">
-            Display v0.9.4
+            Display v0.10.0
         </div>
     </div>
 
@@ -90,13 +90,28 @@
                         return;
                     }
 
+                    // Filter messages by gameId if present and relevant
+                    // This is a simple example; a more robust system might have clients "subscribe" to a gameId
+                    if (messageData.gameId && window.currentLoadedGameIdOnDisplay && messageData.gameId !== window.currentLoadedGameIdOnDisplay && messageData.type !== 'game_over' && messageData.type !== 'moderator_message') {
+                        console.log("Display: Ignoring message for different gameId " + messageData.gameId);
+                        return;
+                    }
+
+
                     if (gameHasEnded && messageData.type !== 'game_over' && messageData.type !== 'moderator_message') {
                         console.log("DISPLAY.HTML: Game has ended, ignoring message type: " + messageData.type);
                         return; 
                     }
                     if (messageData.type === 'game_over') {
                          gameHasEnded = true; 
-                         console.log("DISPLAY.HTML: Game over flag SET.");
+                         console.log("DISPLAY.HTML: Game over flag SET for game " + messageData.gameId);
+                         window.currentLoadedGameIdOnDisplay = messageData.gameId; // Ensure we show game over for this game
+                    } else if (messageData.gameId) {
+                        // If it's not a game_over message, but it has a gameId,
+                        // assume this is the new "active" game for this display.
+                        // This helps if the moderator switches games.
+                        window.currentLoadedGameIdOnDisplay = messageData.gameId;
+                        gameHasEnded = false; // Reset if a new game context message arrives
                     }
 
 
@@ -115,10 +130,8 @@
                         displayTitle.textContent = "Game Information";
                         if (content !== undefined) { 
                             messageDisplay.innerHTML = `<div class="message-enter">${content}</div>`;
-                             console.log("DISPLAY.HTML: Displaying moderator_message content: " + content);
                         } else {
                              messageDisplay.innerHTML = `<div class="message-enter">(Empty general message)</div>`; 
-                             console.log("DISPLAY.HTML: Moderator_message received but content is undefined.");
                         }
                     } else if (messageData.type === 'game_phase_change' && payload) {
                         displayTitle.textContent = payload.phase.charAt(0).toUpperCase() + payload.phase.slice(1) + " Phase";
@@ -188,7 +201,6 @@
                             <div class="winning-team-message message-enter">${payload.team} Wins!</div> 
                             <div class="message-enter mt-2 text-lg">${payload.reason || ''}</div>
                         `;
-                        // gameHasEnded = true; // Already set above
                     }
                     else {
                         displayTitle.textContent = "Game Information";
