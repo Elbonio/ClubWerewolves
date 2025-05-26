@@ -17,7 +17,7 @@ const mysql = require('mysql2/promise');
 const app = express(); 
 app.use(express.json()); 
 
-const SERVER_VERSION = "0.10.6"; 
+const SERVER_VERSION = "0.10.7"; 
 
 // --- Database Connection Pool ---
 let pool;
@@ -598,7 +598,7 @@ app.post('/api/games/:gameId/phase', async (req, res) => {
             game.werewolfNightTarget = null; 
             game.playersOnTrial = []; game.votes = {}; 
             await pool.execute('UPDATE games SET current_phase = ?, werewolf_night_target = NULL, players_on_trial = ?, votes = ? WHERE game_id = ?', 
-                [phase, null, JSON.stringify([]), JSON.stringify({}), gameId]);
+                [phase, null, JSON.stringify(game.playersOnTrial || []), JSON.stringify(game.votes || {}), gameId]); // Added default for JSON
             console.log("Game " + gameId + " phase changed to NIGHT (DB updated)");
         } else if (phase === 'day') {
             console.log("Game " + gameId + " phase changed to DAY from " + previousPhase);
@@ -621,7 +621,7 @@ app.post('/api/games/:gameId/phase', async (req, res) => {
             game.playersOnTrial = []; game.votes = {}; 
             await pool.execute(
                 'UPDATE games SET current_phase = ?, werewolf_night_target = NULL, players_on_trial = ?, votes = ?, game_log = ? WHERE game_id = ?', 
-                [phase, JSON.stringify([]), JSON.stringify({}), JSON.stringify(game.gameLog || []), gameId]
+                [phase, JSON.stringify(game.playersOnTrial || []), JSON.stringify(game.votes || {}), JSON.stringify(game.gameLog || []), gameId]
             );
         }
         await checkWinConditions(game); 
