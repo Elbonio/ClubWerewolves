@@ -160,7 +160,6 @@
         let localMasterPlayers = []; 
         let localGameList = [];      
         
-        // These will be primarily driven by server state after loading a game
         let playersInCurrentGame = []; 
         let gameRoles = {};            
         let currentPhase = 'setup';    
@@ -285,14 +284,13 @@
             function sendWebSocketMessage(type, dataPayload) { 
                 logToModerator('Attempting to send WS message. Type: ' + type + ', Socket Ready: ' + (socket && socket.readyState === WebSocket.OPEN), 'Debug');
                 
+                // Allow moderator_message even if no game is loaded.
                 if (type !== 'moderator_message' && !currentLoadedGameId) {
-                     // Allow moderator_message even if no game is loaded.
-                     // For other types, ensure a game is loaded.
                      if (type === 'moderator_message') {
-                         // Proceed to send, gameId might be null but that's handled by server/display if needed.
+                         // This case is fine, gameId will be null
                      } else {
                         logToModerator("Cannot send WS message: No game loaded for type " + type, "Error");
-                        return;
+                        return; 
                      }
                 }
 
@@ -704,7 +702,6 @@
                 });
                 if (phaseUpdate) {
                     logToModerator("Night phase started (server updated).", "Phase");
-                    // Only send phase change WS if game is not over (server now includes gameWinner in response)
                     if (!phaseUpdate.gameWinner || !phaseUpdate.gameWinner.team) { 
                         sendWebSocketMessage('game_phase_change', { payload: { phase: 'night', message: "Night has fallen. Everyone, close your eyes." } });
                     }
@@ -722,12 +719,10 @@
 
                 if (phaseUpdate) { 
                     logToModerator("Day phase processing complete (server updated). Elim Result: " + JSON.stringify(phaseUpdate.eliminationResult), "Phase");
-                    // Only send phase change WS if game is not over (server now includes gameWinner in response)
                     if (!phaseUpdate.gameWinner || !phaseUpdate.gameWinner.team) { 
                         const daybreakPayload = {
                             phase: 'day',
                             message: "Daybreak! Open your eyes and discuss.",
-                            // Use eliminationResult directly from the server's response
                             eliminatedPlayer: phaseUpdate.eliminationResult?.eliminatedPlayerName, 
                             specialInfo: phaseUpdate.eliminationResult?.specialInfo 
                         };

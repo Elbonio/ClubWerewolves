@@ -55,7 +55,7 @@
             <div id="status" class="p-3 bg-gray-700 rounded-lg text-sm">Connecting to server...</div>
         </div>
          <div class="mt-6 text-center text-xs text-gray-500">
-            Display v0.9.3
+            Display v0.9.4
         </div>
     </div>
 
@@ -181,7 +181,7 @@
                         }
                         messageDisplay.innerHTML = votingHTML;
                     } else if (messageData.type === 'game_over' && payload) {
-                        console.log("DISPLAY.HTML: Processing game_over message. Payload:", payload); // Ensure this log exists
+                        console.log("DISPLAY.HTML: Processing game_over message. Payload:", payload); 
                         displayTitle.textContent = "GAME OVER!";
                         messageDisplay.innerHTML = `
                             <div class="game-over-message message-enter">GAME OVER!</div>
