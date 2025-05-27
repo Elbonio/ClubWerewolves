@@ -4,7 +4,7 @@
 // 2. Install `express` and `ws`: npm install express ws
 // 3. Install `mysql2`: npm install mysql2
 // 4. Set up your MariaDB/MySQL database and environment variables.
-// 5. Create the `master_players`, `sessions`, and `games` tables using SQL.
+// 5. Create the `master_players`, `sessions`, `games`, `game_players`, and `roles_config` tables using SQL.
 // 6. Save this code as server.js and run from your terminal: node server.js
 
 const WebSocket = require('ws');
@@ -46,75 +46,11 @@ try {
     console.error("Failed to create MariaDB connection pool:", error);
 }
 
-/* SQL to create tables:
-CREATE TABLE IF NOT EXISTS master_players (
-    id VARCHAR(255) PRIMARY KEY,
-    name VARCHAR(255) NOT NULL UNIQUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS sessions (
-    session_id VARCHAR(255) PRIMARY KEY,
-    session_name VARCHAR(255) NOT NULL,
-    session_date DATE NOT NULL,
-    is_archived BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS games (
-   game_id VARCHAR(255) PRIMARY KEY,
-   session_id VARCHAR(255) NOT NULL,
-   game_name VARCHAR(255) NOT NULL,
-   current_phase VARCHAR(50) DEFAULT 'setup',
-   seer_player_name VARCHAR(255) NULL,
-   werewolf_night_target VARCHAR(255) NULL,
-   players_on_trial JSON NULL, 
-   votes JSON NULL,            
-   player_order_json JSON NULL, 
-   game_winner_team VARCHAR(50) NULL,
-   game_winner_reason TEXT NULL,
-   game_log JSON NULL,   
-   is_archived BOOLEAN DEFAULT FALSE,      
-   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-   FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE 
-);
-
-CREATE TABLE IF NOT EXISTS game_players (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    game_id VARCHAR(255) NOT NULL,
-    player_id VARCHAR(255) NOT NULL, 
-    player_name VARCHAR(255) NOT NULL, 
-    role_name VARCHAR(255) NULL,
-    role_team VARCHAR(50) NULL,
-    role_alignment VARCHAR(50) NULL,
-    status VARCHAR(50) DEFAULT 'alive',
-    FOREIGN KEY (game_id) REFERENCES games(game_id) ON DELETE CASCADE,
-    FOREIGN KEY (player_id) REFERENCES master_players(id) ON DELETE RESTRICT, 
-    UNIQUE KEY unique_player_in_game (game_id, player_id) 
-);
-
-CREATE TABLE IF NOT EXISTS roles_config (
-    role_id VARCHAR(255) PRIMARY KEY,
-    role_name VARCHAR(100) NOT NULL UNIQUE,
-    description TEXT,
-    team VARCHAR(50) NOT NULL, 
-    alignment VARCHAR(50) NOT NULL, 
-    has_night_action BOOLEAN DEFAULT FALSE,
-    night_action_order INT DEFAULT 0, 
-    is_unique BOOLEAN DEFAULT TRUE, 
-    is_enabled BOOLEAN DEFAULT TRUE, 
-    is_archived BOOLEAN NOT NULL DEFAULT FALSE, 
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-);
-*/
-
 // --- In-Memory Data Store for Games (caches loaded games) ---
 let gamesCache = {}; 
 
-const ALL_ROLES_SERVER = { // This will eventually be replaced by roles_config table
+// This will eventually be replaced by roles_config table for game logic
+const ALL_ROLES_SERVER = {
     VILLAGER: { name: "Villager", description: "Find and eliminate the werewolves.", team: "Good", alignment: "Village" },
     WEREWOLF: { name: "Werewolf", description: "Eliminate the villagers to win.", team: "Evil", alignment: "Werewolf" },
     SEER: { name: "Seer", description: "Each night, you may learn the alignment of one player.", team: "Good", alignment: "Village" }
@@ -372,6 +308,7 @@ app.delete('/api/sessions/:sessionId', async (req, res) => {
     }
 });
 
+
 // --- Game API Endpoints (Session-Aware) ---
 app.get('/api/sessions/:sessionId/games', async (req, res) => {
     if (!pool) return res.status(500).json({ message: "Database not configured." });
@@ -620,7 +557,7 @@ app.post('/api/games/:gameId/phase', async (req, res) => {
             game.werewolfNightTarget = null; 
             game.playersOnTrial = []; game.votes = {}; 
             await pool.execute('UPDATE games SET current_phase = ?, werewolf_night_target = NULL, players_on_trial = ?, votes = ? WHERE game_id = ?', 
-                [phase, JSON.stringify(game.playersOnTrial || []), JSON.stringify(game.votes || {}), gameId]);
+                [phase, JSON.stringify(game.playersOnTrial || []), JSON.stringify(game.votes || {}), gameId]); // Corrected parameters
             console.log("Game " + gameId + " phase changed to NIGHT (DB updated)");
         } else if (phase === 'day') {
             console.log("Game " + gameId + " phase changed to DAY from " + previousPhase);
@@ -801,6 +738,43 @@ app.post('/api/games/:gameId/process-elimination', async (req, res) => {
     gamesCache[gameId] = game; 
     const gameResponse = {...game, eliminationOutcome: actualEliminationMessage };
     res.status(200).json(gameResponse); 
+});
+
+// --- Admin Role Configuration API Endpoints ---
+app.get('/api/admin/roles', async (req, res) => {
+    if (!pool) return res.status(500).json({ message: "Database not configured." });
+    console.log("SERVER: GET /api/admin/roles invoked.");
+    try {
+        const [roles] = await pool.query('SELECT role_id, role_name, description, team, alignment, has_night_action, night_action_order, is_unique, is_enabled FROM roles_config WHERE is_archived = 0 ORDER BY role_name ASC');
+        console.log("SERVER: Roles fetched from DB:", roles);
+        res.json(roles);
+    } catch (error) {
+        console.error("SERVER: Error fetching roles from DB:", error);
+        res.status(500).json({ message: "Failed to fetch roles.", error: error.message });
+    }
+});
+
+app.post('/api/admin/roles', async (req, res) => {
+    if (!pool) return res.status(500).json({ message: "Database not configured." });
+    const { roleName, description, team, alignment, hasNightAction, nightActionOrder, isUniqueRole, isEnabledRole } = req.body;
+    if (!roleName || !team || !alignment) {
+        return res.status(400).json({ message: "Role Name, Team, and Alignment are required." });
+    }
+    const roleId = 'role_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
+    try {
+        await pool.execute(
+            'INSERT INTO roles_config (role_id, role_name, description, team, alignment, has_night_action, night_action_order, is_unique, is_enabled, is_archived) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [roleId, roleName, description, team, alignment, hasNightAction || false, nightActionOrder || 0, isUniqueRole === undefined ? true : isUniqueRole, isEnabledRole === undefined ? true : isEnabledRole, false]
+        );
+        console.log('New role defined:', roleName);
+        res.status(201).json({ roleId, roleName });
+    } catch (error) {
+        console.error("Error creating new role in DB:", error);
+         if (error.code === 'ER_DUP_ENTRY') {
+            return res.status(409).json({ message: 'A role with this name already exists.' });
+        }
+        res.status(500).json({ message: "Failed to create new role." });
+    }
 });
 
 
