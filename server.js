@@ -94,12 +94,27 @@ CREATE TABLE IF NOT EXISTS game_players (
     FOREIGN KEY (player_id) REFERENCES master_players(id) ON DELETE RESTRICT, 
     UNIQUE KEY unique_player_in_game (game_id, player_id) 
 );
+
+CREATE TABLE IF NOT EXISTS roles_config (
+    role_id VARCHAR(255) PRIMARY KEY,
+    role_name VARCHAR(100) NOT NULL UNIQUE,
+    description TEXT,
+    team VARCHAR(50) NOT NULL, 
+    alignment VARCHAR(50) NOT NULL, 
+    has_night_action BOOLEAN DEFAULT FALSE,
+    night_action_order INT DEFAULT 0, 
+    is_unique BOOLEAN DEFAULT TRUE, 
+    is_enabled BOOLEAN DEFAULT TRUE, 
+    is_archived BOOLEAN NOT NULL DEFAULT FALSE, 
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
 */
 
 // --- In-Memory Data Store for Games (caches loaded games) ---
 let gamesCache = {}; 
 
-const ALL_ROLES_SERVER = {
+const ALL_ROLES_SERVER = { // This will eventually be replaced by roles_config table
     VILLAGER: { name: "Villager", description: "Find and eliminate the werewolves.", team: "Good", alignment: "Village" },
     WEREWOLF: { name: "Werewolf", description: "Eliminate the villagers to win.", team: "Evil", alignment: "Werewolf" },
     SEER: { name: "Seer", description: "Each night, you may learn the alignment of one player.", team: "Good", alignment: "Village" }
@@ -189,12 +204,12 @@ async function fetchGameFromDB(gameId) {
             if (pDetail) {
                 playersInGameFromDB[name] = {
                     id: pDetail.player_id, roleName: pDetail.role_name,
-                    roleDetails: pDetail.role_name ? (ALL_ROLES_SERVER[Object.keys(ALL_ROLES_SERVER).find(key => ALL_ROLES_SERVER[key].name === pDetail.role_name)] || {name: pDetail.role_name, team: pDetail.role_team, alignment: pDetail.role_alignment, description: "Config missing."}) : null,
+                    roleDetails: pDetail.role_name ? (ALL_ROLES_SERVER[Object.keys(ALL_ROLES_SERVER).find(key => ALL_ROLES_SERVER[key].name === pDetail.role_name)] || {name: pDetail.role_name, team: pDetail.role_team || 'Unknown', alignment: pDetail.role_alignment || 'Unknown', description: "Config missing."}) : null,
                     status: pDetail.status
                 };
             }
         });
-         playerDetailRows.forEach(p => { if (!playersInGameFromDB[p.player_name]) { playersInGameFromDB[p.player_name] = {id: p.player_id,roleName: p.role_name,roleDetails: p.role_name ? (ALL_ROLES_SERVER[Object.keys(ALL_ROLES_SERVER).find(key => ALL_ROLES_SERVER[key].name === p.role_name)] || {name: p.role_name, team: p.role_team, alignment: p.role_alignment, description: "Config missing."}) : null,status: p.status};}});
+         playerDetailRows.forEach(p => { if (!playersInGameFromDB[p.player_name]) { playersInGameFromDB[p.player_name] = {id: p.player_id,roleName: p.role_name,roleDetails: p.role_name ? (ALL_ROLES_SERVER[Object.keys(ALL_ROLES_SERVER).find(key => ALL_ROLES_SERVER[key].name === p.role_name)] || {name: p.role_name, team: p.role_team || 'Unknown', alignment: p.role_alignment || 'Unknown', description: "Config missing."}) : null,status: p.status};}});
 
         const fullGameData = {
             gameId: gameDataFromDB.game_id, sessionId: gameDataFromDB.session_id, gameName: gameDataFromDB.game_name,
@@ -356,7 +371,6 @@ app.delete('/api/sessions/:sessionId', async (req, res) => {
         if(connection) connection.release();
     }
 });
-
 
 // --- Game API Endpoints (Session-Aware) ---
 app.get('/api/sessions/:sessionId/games', async (req, res) => {
@@ -793,7 +807,7 @@ app.post('/api/games/:gameId/process-elimination', async (req, res) => {
 // --- HTTP Server Setup & WebSocket ---
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'moderator.html')));
 app.get('/moderator.html', (req, res) => res.sendFile(path.join(__dirname, 'moderator.html')));
-app.get('/admin.html', (req, res) => res.sendFile(path.join(__dirname, 'admin.html'))); // Serve admin page
+app.get('/admin.html', (req, res) => res.sendFile(path.join(__dirname, 'admin.html'))); 
 app.get('/display.html', (req, res) => res.sendFile(path.join(__dirname, 'display.html')));
 app.use((req, res) => res.status(404).send('Resource not found: ' + req.url));
 
@@ -833,4 +847,5 @@ server.listen(port, () => {
     console.log('Admin: http://localhost:' + port + '/admin.html');
 });
 console.log('Initializing server... Version: ' + SERVER_VERSION);
+
 // --- End of server.js ---

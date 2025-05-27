@@ -178,7 +178,7 @@
             <div id="moderatorLog" class="message-log-container p-3 bg-gray-600 rounded-lg text-sm space-y-1"></div>
         </div>
         <div class="mt-6 text-center text-xs text-gray-500">
-            Panel v0.10.7 / Server <span id="serverVersionDisplay">loading...</span>
+            Panel v0.10.8 / Server <span id="serverVersionDisplay">loading...</span>
         </div>
     </div>
 
@@ -528,7 +528,7 @@
                     currentGameInfoDisplay.textContent = 'No game loaded.';
                     currentGamePhaseInfo.textContent = '';
                     hideAllGameSpecificSections();
-                    await loadGamesListForSession(currentLoadedSessionId); 
+                    if(currentLoadedSessionId) await loadGamesListForSession(currentLoadedSessionId); 
                 }
             });
             async function loadSpecificGame(gameId) {
@@ -793,7 +793,7 @@
                     showRoleBtn.textContent = 'Show Role';
                     showRoleBtn.className = 'bg-indigo-500 hover:bg-indigo-600 text-white text-xs font-semibold py-1 px-2 rounded-md transition';
                     showRoleBtn.onclick = () => sendWebSocketMessage('show_specific_role', { 
-                        payload: { playerName, roleName: playerData.roleName, roleDescription: playerData.roleDetails.description, team: playerData.roleDetails.team } 
+                        payload: { playerName, roleName: playerData.roleName, roleDescription: playerData.roleDetails?.description || 'No description', team: playerData.roleDetails?.team || 'Unknown' } 
                     });
                     buttonContainer.appendChild(showRoleBtn);
 
