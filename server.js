@@ -49,8 +49,7 @@ try {
 // --- In-Memory Data Store for Games (caches loaded games) ---
 let gamesCache = {}; 
 
-// This will eventually be replaced by roles_config table for game logic
-const ALL_ROLES_SERVER = {
+const ALL_ROLES_SERVER = { // This will eventually be replaced by roles_config table for game logic
     VILLAGER: { name: "Villager", description: "Find and eliminate the werewolves.", team: "Good", alignment: "Village" },
     WEREWOLF: { name: "Werewolf", description: "Eliminate the villagers to win.", team: "Evil", alignment: "Werewolf" },
     SEER: { name: "Seer", description: "Each night, you may learn the alignment of one player.", team: "Good", alignment: "Village" }
@@ -557,7 +556,7 @@ app.post('/api/games/:gameId/phase', async (req, res) => {
             game.werewolfNightTarget = null; 
             game.playersOnTrial = []; game.votes = {}; 
             await pool.execute('UPDATE games SET current_phase = ?, werewolf_night_target = NULL, players_on_trial = ?, votes = ? WHERE game_id = ?', 
-                [phase, JSON.stringify(game.playersOnTrial || []), JSON.stringify(game.votes || {}), gameId]); // Corrected parameters
+                [phase, JSON.stringify(game.playersOnTrial || []), JSON.stringify(game.votes || {}), gameId]);
             console.log("Game " + gameId + " phase changed to NIGHT (DB updated)");
         } else if (phase === 'day') {
             console.log("Game " + gameId + " phase changed to DAY from " + previousPhase);
@@ -740,6 +739,7 @@ app.post('/api/games/:gameId/process-elimination', async (req, res) => {
     res.status(200).json(gameResponse); 
 });
 
+
 // --- Admin Role Configuration API Endpoints ---
 app.get('/api/admin/roles', async (req, res) => {
     if (!pool) return res.status(500).json({ message: "Database not configured." });
@@ -821,5 +821,4 @@ server.listen(port, () => {
     console.log('Admin: http://localhost:' + port + '/admin.html');
 });
 console.log('Initializing server... Version: ' + SERVER_VERSION);
-
 // --- End of server.js ---

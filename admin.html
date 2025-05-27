@@ -128,7 +128,6 @@
                             <em class="text-sm text-gray-400">${role.description || 'No description.'}</em><br>
                             <span class="text-xs text-gray-500">Night Action: ${role.has_night_action ? 'Yes (Order: ' + role.night_action_order + ')' : 'No'} | Unique: ${role.is_unique ? 'Yes' : 'No'} | Enabled: ${role.is_enabled ? 'Yes' : 'No'}</span>
                         `;
-                        // TODO: Add Edit/Delete buttons here later
                         existingRolesList.appendChild(li);
                     });
                 } else {
