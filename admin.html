@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Werewolf - Admin Panel</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .section-title { font-size: 1.5rem; font-weight: 600; margin-bottom: 1rem; color: #93C5FD; }
+        .sub-section-title { font-size: 1.25rem; font-weight: 500; margin-bottom: 0.75rem; color: #A5B4FC; }
+        label { display: block; margin-bottom: 0.25rem; color: #D1D5DB; }
+        input[type="text"], input[type="number"], textarea, select {
+            background-color: #4B5563;
+            border: 1px solid #6B7280;
+            color: white;
+            padding: 0.5rem;
+            border-radius: 0.375rem;
+            width: 100%;
+        }
+        input[type="checkbox"] {
+            margin-right: 0.5rem;
+        }
+        button {
+            transition: background-color 0.2s;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white min-h-screen p-8">
+    <div class="container mx-auto max-w-3xl">
+        <h1 class="text-3xl font-bold mb-8 text-center text-purple-400">Werewolf Game Admin Panel</h1>
+
+        <div class="mb-12 p-6 bg-gray-800 rounded-xl shadow-xl">
+            <h2 class="section-title">Role Configuration</h2>
+            
+            <div class="mb-8 p-4 bg-gray-700 rounded-lg">
+                <h3 class="sub-section-title">Define New Role</h3>
+                <form id="newRoleForm" class="space-y-4">
+                    <div>
+                        <label for="roleName">Role Name:</label>
+                        <input type="text" id="roleName" name="roleName" required>
+                    </div>
+                    <div>
+                        <label for="roleDescription">Description:</label>
+                        <textarea id="roleDescription" name="roleDescription" rows="3"></textarea>
+                    </div>
+                    <div>
+                        <label for="roleTeam">Team:</label>
+                        <select id="roleTeam" name="roleTeam">
+                            <option value="Good">Good</option>
+                            <option value="Evil">Evil</option>
+                            <option value="Neutral">Neutral</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="roleAlignment">Alignment:</label>
+                        <select id="roleAlignment" name="roleAlignment">
+                            <option value="Village">Village</option>
+                            <option value="Werewolf">Werewolf</option>
+                            <option value="Self">Self</option>
+                            <option value="Other">Other</option>
+                        </select>
+                    </div>
+                    <div class="flex items-center">
+                        <input type="checkbox" id="hasNightAction" name="hasNightAction">
+                        <label for="hasNightAction" class="ml-2">Has Night Action?</label>
+                    </div>
+                     <div>
+                        <label for="nightActionOrder">Night Action Order (0 for no action, lower acts first):</label>
+                        <input type="number" id="nightActionOrder" name="nightActionOrder" value="0" min="0">
+                    </div>
+                    <div class="flex items-center">
+                        <input type="checkbox" id="isUniqueRole" name="isUniqueRole" checked>
+                        <label for="isUniqueRole" class="ml-2">Is Unique Role? (Only one per game)</label>
+                    </div>
+                     <div class="flex items-center">
+                        <input type="checkbox" id="isEnabledRole" name="isEnabledRole" checked>
+                        <label for="isEnabledRole" class="ml-2">Is Enabled? (Available for games)</label>
+                    </div>
+                    <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg">Save New Role</button>
+                </form>
+            </div>
+
+            <div>
+                <h3 class="sub-section-title">Existing Roles</h3>
+                <ul id="existingRolesList" class="space-y-2">
+                    </ul>
+            </div>
+        </div>
+        
+        <div class="mt-6 text-center text-xs text-gray-500">
+            Admin Panel v0.10.7
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const newRoleForm = document.getElementById('newRoleForm');
+            const existingRolesList = document.getElementById('existingRolesList');
+
+            async function fetchFromServer(endpoint, options = {}) {
+                try {
+                    const response = await fetch(endpoint, options);
+                    if (!response.ok) {
+                        const errorData = await response.json().catch(() => ({ message: response.statusText }));
+                        console.error('API Error (' + response.status + '): ' + (errorData.message || 'Unknown error') + ' at ' + endpoint);
+                        alert('API request failed: ' + (errorData.message || response.statusText));
+                        return null;
+                    }
+                    if (response.status === 204) return true; 
+                    return response.json();
+                } catch (error) {
+                    console.error("Fetch Error:", error);
+                    alert('Network or fetch error. Check console.');
+                    return null;
+                }
+            }
+
+            async function loadDefinedRoles() {
+                const roles = await fetchFromServer('/api/admin/roles');
+                existingRolesList.innerHTML = '';
+                if (roles && roles.length > 0) {
+                    roles.forEach(role => {
+                        const li = document.createElement('li');
+                        li.className = 'p-3 bg-gray-700 rounded-md shadow';
+                        li.innerHTML = `
+                            <strong class="text-purple-300">${role.role_name}</strong> (Team: ${role.team}, Alignment: ${role.alignment})<br>
+                            <em class="text-sm text-gray-400">${role.description || 'No description.'}</em><br>
+                            <span class="text-xs text-gray-500">Night Action: ${role.has_night_action ? 'Yes (Order: ' + role.night_action_order + ')' : 'No'} | Unique: ${role.is_unique ? 'Yes' : 'No'} | Enabled: ${role.is_enabled ? 'Yes' : 'No'}</span>
+                        `;
+                        // TODO: Add Edit/Delete buttons here later
+                        existingRolesList.appendChild(li);
+                    });
+                } else {
+                    existingRolesList.innerHTML = '<li class="text-gray-500 italic">No roles defined yet.</li>';
+                }
+            }
+
+            newRoleForm.addEventListener('submit', async (event) => {
+                event.preventDefault();
+                const formData = new FormData(newRoleForm);
+                const roleData = {
+                    roleName: formData.get('roleName'),
+                    description: formData.get('roleDescription'),
+                    team: formData.get('roleTeam'),
+                    alignment: formData.get('roleAlignment'),
+                    hasNightAction: formData.get('hasNightAction') === 'on',
+                    nightActionOrder: parseInt(formData.get('nightActionOrder'), 10) || 0,
+                    isUniqueRole: formData.get('isUniqueRole') === 'on',
+                    isEnabledRole: formData.get('isEnabledRole') === 'on'
+                };
+
+                console.log("Submitting new role:", roleData);
+
+                const result = await fetchFromServer('/api/admin/roles', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(roleData)
+                });
+
+                if (result) {
+                    alert('Role saved successfully!');
+                    newRoleForm.reset();
+                    document.getElementById('hasNightAction').checked = false; // Reset checkboxes explicitly
+                    document.getElementById('isUniqueRole').checked = true;
+                    document.getElementById('isEnabledRole').checked = true;
+                    loadDefinedRoles();
+                } else {
+                    alert('Failed to save role. Check console for errors.');
+                }
+            });
+
+            // Initial load
+            loadDefinedRoles();
+        });
+    </script>
+</body>
+</html>

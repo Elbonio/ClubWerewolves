@@ -297,7 +297,7 @@ app.put('/api/sessions/:sessionId', async (req, res) => {
     const params = [];
     const setClauses = [];
 
-    if (sessionName !== undefined) { // Allow empty string for name if intended
+    if (sessionName !== undefined) { 
         setClauses.push('session_name = ?');
         params.push(sessionName);
     }
@@ -606,7 +606,7 @@ app.post('/api/games/:gameId/phase', async (req, res) => {
             game.werewolfNightTarget = null; 
             game.playersOnTrial = []; game.votes = {}; 
             await pool.execute('UPDATE games SET current_phase = ?, werewolf_night_target = NULL, players_on_trial = ?, votes = ? WHERE game_id = ?', 
-                [phase, JSON.stringify(game.playersOnTrial || []), JSON.stringify(game.votes || {}), gameId]); // Corrected werewolf_night_target to NULL directly
+                [phase, JSON.stringify(game.playersOnTrial || []), JSON.stringify(game.votes || {}), gameId]);
             console.log("Game " + gameId + " phase changed to NIGHT (DB updated)");
         } else if (phase === 'day') {
             console.log("Game " + gameId + " phase changed to DAY from " + previousPhase);
@@ -793,6 +793,7 @@ app.post('/api/games/:gameId/process-elimination', async (req, res) => {
 // --- HTTP Server Setup & WebSocket ---
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'moderator.html')));
 app.get('/moderator.html', (req, res) => res.sendFile(path.join(__dirname, 'moderator.html')));
+app.get('/admin.html', (req, res) => res.sendFile(path.join(__dirname, 'admin.html'))); // Serve admin page
 app.get('/display.html', (req, res) => res.sendFile(path.join(__dirname, 'display.html')));
 app.use((req, res) => res.status(404).send('Resource not found: ' + req.url));
 
@@ -829,6 +830,7 @@ server.listen(port, () => {
     console.log('HTTP & WS server on port', port + ' - Version: ' + SERVER_VERSION);
     console.log('Moderator: http://localhost:' + port + '/');
     console.log('Display: http://localhost:' + port + '/display.html');
+    console.log('Admin: http://localhost:' + port + '/admin.html');
 });
 console.log('Initializing server... Version: ' + SERVER_VERSION);
 // --- End of server.js ---
