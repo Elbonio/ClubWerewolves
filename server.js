@@ -49,7 +49,8 @@ try {
 // --- In-Memory Data Store for Games (caches loaded games) ---
 let gamesCache = {}; 
 
-const ALL_ROLES_SERVER = { // This will eventually be replaced by roles_config table for game logic
+// This will eventually be replaced by roles_config table for game logic
+const ALL_ROLES_SERVER = {
     VILLAGER: { name: "Villager", description: "Find and eliminate the werewolves.", team: "Good", alignment: "Village" },
     WEREWOLF: { name: "Werewolf", description: "Eliminate the villagers to win.", team: "Evil", alignment: "Werewolf" },
     SEER: { name: "Seer", description: "Each night, you may learn the alignment of one player.", team: "Good", alignment: "Village" }
@@ -745,7 +746,7 @@ app.get('/api/admin/roles', async (req, res) => {
     if (!pool) return res.status(500).json({ message: "Database not configured." });
     console.log("SERVER: GET /api/admin/roles invoked.");
     try {
-        const [roles] = await pool.query('SELECT role_id, role_name, description, team, alignment, has_night_action, night_action_order, is_unique, is_enabled FROM roles_config WHERE is_archived = 0 ORDER BY role_name ASC');
+        const [roles] = await pool.query('SELECT role_id, role_name, description, team, alignment, apparent_alignment, is_killer, power_level, uses_magic, has_night_movement, role_category_type, starts_as_villager, has_night_action, night_action_order, is_unique, is_enabled FROM roles_config WHERE is_archived = 0 ORDER BY role_name ASC');
         console.log("SERVER: Roles fetched from DB:", roles);
         res.json(roles);
     } catch (error) {
@@ -756,15 +757,23 @@ app.get('/api/admin/roles', async (req, res) => {
 
 app.post('/api/admin/roles', async (req, res) => {
     if (!pool) return res.status(500).json({ message: "Database not configured." });
-    const { roleName, description, team, alignment, hasNightAction, nightActionOrder, isUniqueRole, isEnabledRole } = req.body;
+    const { 
+        roleName, description, team, alignment, apparentAlignment, 
+        isKiller, powerLevel, usesMagic, hasNightMovement, roleCategoryType, 
+        startsAsVillager, hasNightAction, nightActionOrder, isEnabledRole 
+    } = req.body;
+
     if (!roleName || !team || !alignment) {
         return res.status(400).json({ message: "Role Name, Team, and Alignment are required." });
     }
     const roleId = 'role_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
     try {
         await pool.execute(
-            'INSERT INTO roles_config (role_id, role_name, description, team, alignment, has_night_action, night_action_order, is_unique, is_enabled, is_archived) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            [roleId, roleName, description, team, alignment, hasNightAction || false, nightActionOrder || 0, isUniqueRole === undefined ? true : isUniqueRole, isEnabledRole === undefined ? true : isEnabledRole, false]
+            'INSERT INTO roles_config (role_id, role_name, description, team, alignment, apparent_alignment, is_killer, power_level, uses_magic, has_night_movement, role_category_type, starts_as_villager, has_night_action, night_action_order, is_unique, is_enabled, is_archived) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [roleId, roleName, description, team, alignment, apparentAlignment || null, 
+             isKiller || false, powerLevel || 'Standard', usesMagic || false, hasNightMovement || false, roleCategoryType || null, 
+             startsAsVillager || false, hasNightAction || false, nightActionOrder || 0, 
+             true, isEnabledRole === undefined ? true : isEnabledRole, false] // is_unique is defaulted to true for now, as per previous schema.
         );
         console.log('New role defined:', roleName);
         res.status(201).json({ roleId, roleName });
@@ -774,6 +783,92 @@ app.post('/api/admin/roles', async (req, res) => {
             return res.status(409).json({ message: 'A role with this name already exists.' });
         }
         res.status(500).json({ message: "Failed to create new role." });
+    }
+});
+
+app.get('/api/admin/screens', async (req, res) => {
+    if (!pool) return res.status(500).json({ message: "Database not configured." });
+    try {
+        const [screens] = await pool.query('SELECT screen_id, screen_name, screen_category, display_title_template, display_content_template, intended_audience FROM screens_config WHERE is_archived = FALSE ORDER BY screen_name ASC');
+        res.json(screens);
+    } catch (error) {
+        console.error("Error fetching screens:", error);
+        res.status(500).json({ message: "Failed to fetch screens." });
+    }
+});
+
+app.post('/api/admin/screens', async (req, res) => {
+    if (!pool) return res.status(500).json({ message: "Database not configured." });
+    const { screenName, screenCategory, displayTitleTemplate, displayContentTemplate, intendedAudience } = req.body;
+    if (!screenName || !screenCategory) {
+        return res.status(400).json({ message: "Screen Name and Category are required."});
+    }
+    const screenId = 'screen_' + Date.now() + '_' + Math.random().toString(36).substring(2,9);
+    try {
+        await pool.execute(
+            'INSERT INTO screens_config (screen_id, screen_name, screen_category, display_title_template, display_content_template, intended_audience, is_archived) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [screenId, screenName, screenCategory, displayTitleTemplate, displayContentTemplate, intendedAudience || 'DisplayOnly', false]
+        );
+        console.log("New screen defined:", screenName);
+        res.status(201).json({ screenId, screenName });
+    } catch (error) {
+        console.error("Error creating new screen:", error);
+        if (error.code === 'ER_DUP_ENTRY') { // If screen_name is made unique
+            return res.status(409).json({ message: 'A screen with this name already exists.' });
+        }
+        res.status(500).json({ message: "Failed to create new screen." });
+    }
+});
+
+app.get('/api/admin/roles/:roleId/screens', async (req, res) => {
+    if (!pool) return res.status(500).json({ message: "Database not configured." });
+    const { roleId } = req.params;
+    try {
+        const [assignments] = await pool.execute(
+            'SELECT rs.assignment_id, rs.screen_id, rs.usage_context, s.screen_name, s.screen_category FROM role_screen_assignments rs JOIN screens_config s ON rs.screen_id = s.screen_id WHERE rs.role_id = ? AND s.is_archived = FALSE',
+            [roleId]
+        );
+        res.json(assignments);
+    } catch (error) {
+        console.error(`Error fetching screen assignments for role ${roleId}:`, error);
+        res.status(500).json({ message: "Failed to fetch screen assignments." });
+    }
+});
+
+app.post('/api/admin/roles/:roleId/screens', async (req, res) => {
+    if (!pool) return res.status(500).json({ message: "Database not configured." });
+    const { roleId } = req.params;
+    const { screenId, usageContext } = req.body;
+    if (!screenId || !usageContext) {
+        return res.status(400).json({ message: "Screen ID and Usage Context are required." });
+    }
+    try {
+        const [result] = await pool.execute(
+            'INSERT INTO role_screen_assignments (role_id, screen_id, usage_context) VALUES (?, ?, ?)',
+            [roleId, screenId, usageContext]
+        );
+        res.status(201).json({ assignmentId: result.insertId, roleId, screenId, usageContext });
+    } catch (error) {
+        console.error(`Error assigning screen ${screenId} to role ${roleId}:`, error);
+        if (error.code === 'ER_DUP_ENTRY') {
+            return res.status(409).json({ message: 'This screen is already assigned to this role for the given context.' });
+        }
+        res.status(500).json({ message: "Failed to assign screen to role." });
+    }
+});
+
+app.delete('/api/admin/role-screen-assignments/:assignmentId', async (req, res) => {
+    if (!pool) return res.status(500).json({ message: "Database not configured." });
+    const { assignmentId } = req.params;
+    try {
+        const [result] = await pool.execute('DELETE FROM role_screen_assignments WHERE assignment_id = ?', [assignmentId]);
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: "Screen assignment not found." });
+        }
+        res.status(204).send();
+    } catch (error) {
+        console.error(`Error deleting screen assignment ${assignmentId}:`, error);
+        res.status(500).json({ message: "Failed to delete screen assignment." });
     }
 });
 
@@ -821,4 +916,7 @@ server.listen(port, () => {
     console.log('Admin: http://localhost:' + port + '/admin.html');
 });
 console.log('Initializing server... Version: ' + SERVER_VERSION);
+
 // --- End of server.js ---
+
+
