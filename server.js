@@ -456,6 +456,7 @@ app.post('/api/games/:gameId/assign-roles', async (req, res) => {
     let rolesToAssign = []; 
     let newSeerPlayerName = null; 
     const numPlayers = game.playerOrder.length;
+    // TODO: Replace this with dynamic role assignment based on roles_config table
     if (numPlayers >= 1) rolesToAssign.push(ALL_ROLES_SERVER.WEREWOLF);
     if (numPlayers >= 3) rolesToAssign.push(ALL_ROLES_SERVER.SEER);
     while (rolesToAssign.length < numPlayers) rolesToAssign.push(ALL_ROLES_SERVER.VILLAGER);
@@ -746,7 +747,7 @@ app.get('/api/admin/roles', async (req, res) => {
     if (!pool) return res.status(500).json({ message: "Database not configured." });
     console.log("SERVER: GET /api/admin/roles invoked.");
     try {
-        const [roles] = await pool.query('SELECT role_id, role_name, description, team, alignment, apparent_alignment, is_killer, power_level, uses_magic, has_night_movement, role_category_type, starts_as_villager, has_night_action, night_action_order, is_unique, is_enabled FROM roles_config WHERE is_archived = 0 ORDER BY role_name ASC');
+        const [roles] = await pool.query('SELECT role_id, role_name, description, team, alignment, apparent_alignment, is_killer, power_level, uses_magic, has_night_movement, role_category_type, starts_as_villager, has_night_action, night_action_order, is_enabled FROM roles_config WHERE is_archived = 0 ORDER BY role_name ASC');
         console.log("SERVER: Roles fetched from DB:", roles);
         res.json(roles);
     } catch (error) {
@@ -768,12 +769,14 @@ app.post('/api/admin/roles', async (req, res) => {
     }
     const roleId = 'role_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
     try {
+        // Note: is_unique was removed from client form, defaulting to TRUE in DB for now if that column still exists.
+        // If is_unique was removed from DB schema, remove it from this INSERT.
         await pool.execute(
-            'INSERT INTO roles_config (role_id, role_name, description, team, alignment, apparent_alignment, is_killer, power_level, uses_magic, has_night_movement, role_category_type, starts_as_villager, has_night_action, night_action_order, is_unique, is_enabled, is_archived) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            'INSERT INTO roles_config (role_id, role_name, description, team, alignment, apparent_alignment, is_killer, power_level, uses_magic, has_night_movement, role_category_type, starts_as_villager, has_night_action, night_action_order, is_enabled, is_archived) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
             [roleId, roleName, description, team, alignment, apparentAlignment || null, 
              isKiller || false, powerLevel || 'Standard', usesMagic || false, hasNightMovement || false, roleCategoryType || null, 
              startsAsVillager || false, hasNightAction || false, nightActionOrder || 0, 
-             true, isEnabledRole === undefined ? true : isEnabledRole, false] // is_unique is defaulted to true for now, as per previous schema.
+             isEnabledRole === undefined ? true : isEnabledRole, false]
         );
         console.log('New role defined:', roleName);
         res.status(201).json({ roleId, roleName });
@@ -813,7 +816,7 @@ app.post('/api/admin/screens', async (req, res) => {
         res.status(201).json({ screenId, screenName });
     } catch (error) {
         console.error("Error creating new screen:", error);
-        if (error.code === 'ER_DUP_ENTRY') { // If screen_name is made unique
+        if (error.code === 'ER_DUP_ENTRY') { 
             return res.status(409).json({ message: 'A screen with this name already exists.' });
         }
         res.status(500).json({ message: "Failed to create new screen." });
@@ -918,5 +921,3 @@ server.listen(port, () => {
 console.log('Initializing server... Version: ' + SERVER_VERSION);
 
 // --- End of server.js ---
-
-

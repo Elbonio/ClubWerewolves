@@ -261,7 +261,7 @@
                     description: formData.get('roleDescription'),
                     team: formData.get('roleTeam'),
                     alignment: formData.get('roleAlignment'),
-                    apparentAlignment: formData.get('apparentAlignment') || null, // Send null if empty
+                    apparentAlignment: formData.get('apparentAlignment') || null, 
                     isKiller: formData.get('isKiller') === 'on',
                     powerLevel: formData.get('powerLevel'),
                     usesMagic: formData.get('usesMagic') === 'on',
@@ -284,8 +284,7 @@
                 if (result) {
                     alert('Role saved successfully!');
                     newRoleForm.reset();
-                    // Explicitly reset checkboxes to their defaults
-                    document.getElementById('hasNightAction').checked = false;
+                    document.getElementById('hasNightAction').checked = false; 
                     document.getElementById('isKiller').checked = false;
                     document.getElementById('usesMagic').checked = false;
                     document.getElementById('hasNightMovement').checked = false;
